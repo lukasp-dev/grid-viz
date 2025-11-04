@@ -16,7 +16,9 @@ from pydantic import BaseModel
 import opf_solver
 
 # Set Gurobi license
-os.environ["GRB_LICENSE_FILE"] = "/Users/a/Desktop/VIP/sc-opf/API key/gurobi.lic"
+# Gurobi license file path - set this in your environment or update the path
+# os.environ["GRB_LICENSE_FILE"] = "/path/to/your/gurobi.lic"
+# For production, use environment variable: export GRB_LICENSE_FILE=/path/to/gurobi.lic
 
 # Initialize FastAPI
 app = FastAPI(
