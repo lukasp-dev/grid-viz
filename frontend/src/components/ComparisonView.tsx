@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { ReactFlow, Background, Controls, MiniMap, ReactFlowProvider } from 'reactflow'
 import {
   useTopology,
@@ -23,17 +23,11 @@ const edgeTypes = {}
 
 // Tooltip Content Component
 function TooltipContent({ node, edges, optimization }: any) {
-  // Extract node ID as string first to avoid type issues
   const nodeId: string = String(node?.id || '')
-  
+
   const getNodeConnections = (nodeId: string, edges: any[]) => {
-    // Filter only ON edges (status >= 0.5 means ON)
-    const incoming = edges.filter((e) => 
-      e.target === nodeId && (e.data?.status === undefined || e.data.status >= 0.5)
-    )
-    const outgoing = edges.filter((e) => 
-      e.source === nodeId && (e.data?.status === undefined || e.data.status >= 0.5)
-    )
+    const incoming = edges.filter((e) => e.target === nodeId)
+    const outgoing = edges.filter((e) => e.source === nodeId)
     return { incoming, outgoing }
   }
 
@@ -44,182 +38,88 @@ function TooltipContent({ node, edges, optimization }: any) {
 
   const { incoming, outgoing } = getNodeConnections(nodeId, edges)
   const genInfo: any = getGeneratorInfo(nodeId)
-  
-  // Type-safe data extraction
+
   const nodeData: any = node.data || {}
   const voltage: number | null = typeof nodeData.voltage === 'number' ? nodeData.voltage : null
   const load: number | null = typeof nodeData.load === 'number' ? nodeData.load : null
   const angle: number | null = typeof nodeData.angle === 'number' ? nodeData.angle : null
   const busType: string = typeof nodeData.busType === 'string' ? nodeData.busType : 'unknown'
-  
-  console.log('🔍 TooltipContent', {
-    nodeId: nodeId,
-    incomingCount: incoming.length,
-    outgoingCount: outgoing.length,
-    allEdgesCount: edges.length,
-    incoming: incoming.map((e: any) => ({
-      id: e.id,
-      source: e.source,
-      status: e.data?.status,
-      flow: e.data?.flow
-    }))
-  })
-  
+
   return (
     <div className="bg-white rounded-lg shadow-xl border border-gray-200 p-4 max-w-xs w-80 max-h-96 overflow-y-auto">
-      {/* Header */}
       <div className="mb-3 pb-3 border-b border-gray-200">
-        <h3 className="text-base font-semibold text-gray-900">
-          Bus {nodeId}
-          <span className="ml-2 text-xs font-normal text-gray-500">
-            ({busType})
-          </span>
-        </h3>
+        <h3 className="text-base font-semibold text-gray-900">Bus {nodeId}<span className="ml-2 text-xs font-normal text-gray-500">({busType})</span></h3>
       </div>
 
-      {/* Basic Info */}
       <div className="space-y-2 mb-3">
         <div className="flex justify-between text-sm">
           <span className="text-gray-600">Voltage:</span>
-          <span className="font-bold">
-            {voltage !== null ? (voltage.toFixed(3) + ' p.u.') : 'N/A'}
-          </span>
+          <span className="font-bold">{voltage !== null ? (voltage.toFixed(3) + ' p.u.') : 'N/A'}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-gray-600">Load (Pd):</span>
-          <span className="font-bold">
-            {load !== null ? (load.toFixed(2) + ' MW') : 'N/A'}
-          </span>
+          <span className="font-bold">{load !== null ? (load.toFixed(2) + ' MW') : 'N/A'}</span>
         </div>
-        {angle !== null ? (
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-600">Angle (θ):</span>
-            <span className="font-bold">{angle.toFixed(2) + '°'}</span>
-          </div>
-        ) : null}
+        {angle !== null && (
+          <div className="flex justify-between text-sm"><span className="text-gray-600">Angle (θ):</span><span className="font-bold">{angle.toFixed(2) + '°'}</span></div>
+        )}
       </div>
 
-      {/* Generator Info */}
       {genInfo && (
         <div className="mb-3 pt-2 border-t">
           <p className="text-xs font-semibold mb-2 text-green-700">🔋 Generator</p>
           <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span>Pg:</span>
-              {/* cspell:disable-next-line */}
-              <span className="font-bold text-green-700">{genInfo.Pg?.toFixed(2)} MW</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Pmax:</span>
-              {/* cspell:disable-next-line */}
-              <span className="font-bold">{genInfo.Pmax?.toFixed(2)} MW</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Pmin:</span>
-              {/* cspell:disable-next-line */}
-              <span className="font-bold">{genInfo.Pmin?.toFixed(2)} MW</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Util:</span>
-              {/* cspell:disable-next-line */}
-              <span className="font-bold">{((genInfo.Pg / genInfo.Pmax) * 100).toFixed(1)}%</span>
-            </div>
+            <div className="flex justify-between"><span>Pg:</span><span className="font-bold text-green-700">{genInfo.Pg?.toFixed(2)} MW</span></div>
+            <div className="flex justify-between"><span>Pmax:</span><span className="font-bold">{genInfo.Pmax?.toFixed(2)} MW</span></div>
+            <div className="flex justify-between"><span>Pmin:</span><span className="font-bold">{genInfo.Pmin?.toFixed(2)} MW</span></div>
+            <div className="flex justify-between"><span>Util:</span><span className="font-bold">{((genInfo.Pg / genInfo.Pmax) * 100).toFixed(1)}%</span></div>
           </div>
         </div>
       )}
 
-      {/* Connections */}
       <div className="mb-2 pt-2 border-t">
         <div className="space-y-2">
-          {/* Incoming */}
           <div>
-            <p className="text-xs font-semibold mb-1 text-green-700">
-              ⬇️ In: {incoming.length}
-            </p>
+            <p className="text-xs font-semibold mb-1 text-green-700">⬇️ In: {incoming.length}</p>
             <div className="space-y-1 max-h-32 overflow-y-auto text-xs">
               {incoming.slice(0, 5).map((edge: any) => (
                 <div key={edge.id} className="bg-green-50 p-2 rounded border border-green-200">
                   <div className="flex justify-between items-start mb-1">
                     <p className="font-medium">Bus {edge.source}</p>
-                    <span className={`px-1.5 py-0.5 rounded text-xs ${
-                      edge.data?.status === undefined || edge.data.status >= 0.5
-                        ? 'bg-green-200 text-green-800'
-                        : 'bg-gray-200 text-gray-600'
-                    }`}>
-                      {edge.data?.status === undefined || edge.data.status >= 0.5 ? 'ON' : 'OFF'}
-                    </span>
+                    <span className={`px-1.5 py-0.5 rounded text-xs ${edge.data?.status === undefined || edge.data.status >= 0.5 ? 'bg-green-200 text-green-800' : 'bg-gray-200 text-gray-600'}`}>{edge.data?.status === undefined || edge.data.status >= 0.5 ? 'ON' : 'OFF'}</span>
                   </div>
                   {edge.data?.flow !== undefined && (
                     <div className="space-y-0.5 text-xs text-gray-600">
-                      <div className="flex justify-between">
-                        <span>Flow:</span>
-                        <span className="font-semibold">{edge.data.flow.toFixed(2)} MW</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Capacity:</span>
-                        <span>{edge.data.capacity?.toFixed(0) || 'N/A'} MVA</span>
-                      </div>
-                      {edge.data.utilization !== undefined && (
-                        <div className="flex justify-between">
-                          <span>Util:</span>
-                          <span className={edge.data.utilization > 90 ? 'text-red-600 font-semibold' : ''}>
-                            {edge.data.utilization.toFixed(1)}%
-                          </span>
-                        </div>
-                      )}
+                      <div className="flex justify-between"><span>Flow:</span><span className="font-semibold">{edge.data.flow.toFixed(2)} MW</span></div>
+                      <div className="flex justify-between"><span>Capacity:</span><span>{edge.data.capacity?.toFixed(0) || 'N/A'} MVA</span></div>
+                      {edge.data.utilization !== undefined && <div className="flex justify-between"><span>Util:</span><span className={edge.data.utilization > 90 ? 'text-red-600 font-semibold' : ''}>{edge.data.utilization.toFixed(1)}%</span></div>}
                     </div>
                   )}
                 </div>
               ))}
-              {incoming.length > 5 && (
-                <p className="text-gray-400 text-center">+{incoming.length - 5} more</p>
-              )}
+              {incoming.length > 5 && <p className="text-gray-400 text-center">+{incoming.length - 5} more</p>}
             </div>
           </div>
 
-          {/* Outgoing */}
           <div>
-            <p className="text-xs font-semibold mb-1 text-blue-700">
-              ⬆️ Out: {outgoing.length}
-            </p>
+            <p className="text-xs font-semibold mb-1 text-blue-700">⬆️ Out: {outgoing.length}</p>
             <div className="space-y-1 max-h-32 overflow-y-auto text-xs">
               {outgoing.slice(0, 5).map((edge: any) => (
                 <div key={edge.id} className="bg-blue-50 p-2 rounded border border-blue-200">
                   <div className="flex justify-between items-start mb-1">
                     <p className="font-medium">Bus {edge.target}</p>
-                    <span className={`px-1.5 py-0.5 rounded text-xs ${
-                      edge.data?.status === undefined || edge.data.status >= 0.5
-                        ? 'bg-blue-200 text-blue-800'
-                        : 'bg-gray-200 text-gray-600'
-                    }`}>
-                      {edge.data?.status === undefined || edge.data.status >= 0.5 ? 'ON' : 'OFF'}
-                    </span>
+                    <span className={`px-1.5 py-0.5 rounded text-xs ${edge.data?.status === undefined || edge.data.status >= 0.5 ? 'bg-blue-200 text-blue-800' : 'bg-gray-200 text-gray-600'}`}>{edge.data?.status === undefined || edge.data.status >= 0.5 ? 'ON' : 'OFF'}</span>
                   </div>
                   {edge.data?.flow !== undefined && (
                     <div className="space-y-0.5 text-xs text-gray-600">
-                      <div className="flex justify-between">
-                        <span>Flow:</span>
-                        <span className="font-semibold">{edge.data.flow.toFixed(2)} MW</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Capacity:</span>
-                        <span>{edge.data.capacity?.toFixed(0) || 'N/A'} MVA</span>
-                      </div>
-                      {edge.data.utilization !== undefined && (
-                        <div className="flex justify-between">
-                          <span>Util:</span>
-                          <span className={edge.data.utilization > 90 ? 'text-red-600 font-semibold' : ''}>
-                            {edge.data.utilization.toFixed(1)}%
-                          </span>
-                        </div>
-                      )}
+                      <div className="flex justify-between"><span>Flow:</span><span className="font-semibold">{edge.data.flow.toFixed(2)} MW</span></div>
+                      <div className="flex justify-between"><span>Capacity:</span><span>{edge.data.capacity?.toFixed(0) || 'N/A'} MVA</span></div>
+                      {edge.data.utilization !== undefined && <div className="flex justify-between"><span>Util:</span><span className={edge.data.utilization > 90 ? 'text-red-600 font-semibold' : ''}>{edge.data.utilization.toFixed(1)}%</span></div>}
                     </div>
                   )}
                 </div>
               ))}
-              {outgoing.length > 5 && (
-                <p className="text-gray-400 text-center">+{outgoing.length - 5} more</p>
-              )}
+              {outgoing.length > 5 && <p className="text-gray-400 text-center">+{outgoing.length - 5} more</p>}
             </div>
           </div>
         </div>
@@ -243,10 +143,36 @@ function ComparisonView() {
   const [rightGenCapacity, setRightGenCapacity] = useState(1.0)
   const [rightCapacityLimit, setRightCapacityLimit] = useState(1.0)
 
-  // Tooltip state (click-based)
-  const [clickedNode, setClickedNode] = useState<any>(null)
-  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null)
-  const [tooltipSide, setTooltipSide] = useState<'left' | 'right' | null>(null)
+  // Tooltip state (click-based) - allow independent left and right persistent overlays
+  const [clickedLeftNode, setClickedLeftNode] = useState<any>(null)
+  const [clickedLeftTooltipPos, setClickedLeftTooltipPos] = useState<{ x: number; y: number } | null>(null)
+  const [clickedRightNode, setClickedRightNode] = useState<any>(null)
+  const [clickedRightTooltipPos, setClickedRightTooltipPos] = useState<{ x: number; y: number } | null>(null)
+  // Hover tooltip state (shows overlay on mouse hover)
+  const [hoveredNode, setHoveredNode] = useState<any>(null)
+  const [hoverTooltipPos, setHoverTooltipPos] = useState<{ x: number; y: number } | null>(null)
+  const [hoverTooltipSide, setHoverTooltipSide] = useState<'left' | 'right' | null>(null)
+
+  // Refs and pane rects so we can clamp tooltips inside their pane and avoid crossing into adjacent network
+  const leftPaneRef = useRef<HTMLDivElement | null>(null)
+  const rightPaneRef = useRef<HTMLDivElement | null>(null)
+  const [leftPaneRect, setLeftPaneRect] = useState<DOMRect | null>(null)
+  const [rightPaneRect, setRightPaneRect] = useState<DOMRect | null>(null)
+
+  useEffect(() => {
+    const updateRects = () => {
+      if (leftPaneRef.current) setLeftPaneRect(leftPaneRef.current.getBoundingClientRect())
+      if (rightPaneRef.current) setRightPaneRect(rightPaneRef.current.getBoundingClientRect())
+    }
+    updateRects()
+    window.addEventListener('resize', updateRects)
+    // also update on scroll in case layout shifts
+    window.addEventListener('scroll', updateRects, true)
+    return () => {
+      window.removeEventListener('resize', updateRects)
+      window.removeEventListener('scroll', updateRects, true)
+    }
+  }, [])
 
   // Fetch topology (shared base structure)
   const { data: topology, isLoading: topologyLoading } = useTopology()
@@ -350,7 +276,7 @@ function ComparisonView() {
 
   // Node click handlers
   const onLeftNodeClick = (event: any, node: any) => {
-    console.log('🔵 onLeftNodeClick called', { nodeId: node.id, currentClicked: clickedNode?.id, tooltipSide })
+    console.log('🔵 onLeftNodeClick called', { nodeId: node.id, currentClicked: clickedLeftNode?.id })
     // Stop event propagation to prevent pane click
     if (event && event.stopPropagation) {
       event.stopPropagation()
@@ -358,68 +284,35 @@ function ComparisonView() {
     if (event && event.preventDefault) {
       event.preventDefault()
     }
-    
     // Toggle: if same node clicked, close tooltip; otherwise show new node
-    setClickedNode((currentNode: any) => {
-      if (currentNode?.id === node.id && tooltipSide === 'left') {
-        console.log('🔵 Closing tooltip (same node clicked)')
-        setTooltipPosition(null)
-        setTooltipSide(null)
-        return null
-      }
+    // Toggle left clicked node
+    if (clickedLeftNode?.id === node.id) {
+      setClickedLeftNode(null)
+      setClickedLeftTooltipPos(null)
+      return
+    }
 
-      console.log('🔵 Opening tooltip for node', node.id)
-      setTooltipSide('left')
-
-      // Calculate position immediately
-      requestAnimationFrame(() => {
-        const nodeElement = document.querySelector(`[data-id="${node.id}"]`) as HTMLElement
-        const panel = document.querySelector('.flex-1.flex.flex-col.border-r-2 .flex-1.relative') as HTMLElement
-        console.log('🔵 Position calculation', { nodeElement: !!nodeElement, panel: !!panel })
-        if (nodeElement && panel) {
-          const rect = nodeElement.getBoundingClientRect()
-          const panelRect = panel.getBoundingClientRect()
-          const position = {
-            x: rect.left - panelRect.left + rect.width / 2,
-            y: rect.top - panelRect.top - 150,
-          }
-          console.log('🔵 Setting tooltip position', position)
-          setTooltipPosition(position)
-        }
-      })
-      
-      return node
-    })
+    console.log('🔵 Opening left click tooltip for node', node.id)
+    setClickedLeftNode(node)
+    const mx = (event && event.clientX) || 0
+    const my = (event && event.clientY) || 0
+    setClickedLeftTooltipPos({ x: mx, y: my })
   }
 
   const onRightNodeClick = (event: any, node: any) => {
     // Stop event propagation to prevent pane click
     event.stopPropagation()
-    
-    // Toggle: if same node clicked, close tooltip; otherwise show new node
-    if (clickedNode?.id === node.id && tooltipSide === 'right') {
-      setClickedNode(null)
-      setTooltipPosition(null)
-      setTooltipSide(null)
+    // Toggle right clicked node independently
+    if (clickedRightNode?.id === node.id) {
+      setClickedRightNode(null)
+      setClickedRightTooltipPos(null)
       return
     }
 
-    setClickedNode(node)
-    setTooltipSide('right')
-    
-    // Calculate position
-    requestAnimationFrame(() => {
-      const nodeElement = document.querySelector(`[data-id="${node.id}"]`) as HTMLElement
-      const panel = document.querySelector('.flex-1.flex.flex-col:not(.border-r-2) .flex-1.relative') as HTMLElement
-      if (nodeElement && panel) {
-        const rect = nodeElement.getBoundingClientRect()
-        const panelRect = panel.getBoundingClientRect()
-        setTooltipPosition({
-          x: rect.left - panelRect.left + rect.width / 2,
-          y: rect.top - panelRect.top - 150,
-        })
-      }
-    })
+    setClickedRightNode(node)
+    const mx = (event && event.clientX) || 0
+    const my = (event && event.clientY) || 0
+    setClickedRightTooltipPos({ x: mx, y: my })
   }
 
 
@@ -431,27 +324,13 @@ function ComparisonView() {
       return
     }
     // Close tooltip when clicking on empty pane
-    if (tooltipSide === 'right') {
-      setClickedNode(null)
-      setTooltipPosition(null)
-      setTooltipSide(null)
+    if (clickedRightNode) {
+      setClickedRightNode(null)
+      setClickedRightTooltipPos(null)
     }
   }
 
-  // Get connected edges for selected node
-  const getNodeConnections = (nodeId: string, edges: any[]) => {
-    const incoming = edges.filter((e) => e.target === nodeId)
-    const outgoing = edges.filter((e) => e.source === nodeId)
-    return { incoming, outgoing }
-  }
-
-  // Get generator info for selected node
-  const getGeneratorInfo = (nodeId: string, side: 'left' | 'right') => {
-    const result = side === 'left' ? leftOptimization.data : rightOptimization.data
-    if (!result?.generators) return null
-    
-    return Object.values(result.generators).find((gen: any) => gen.bus === Number(nodeId))
-  }
+  // (click helpers removed — TooltipContent provides connections/generator info for hover)
 
   if (topologyLoading) {
     return (
@@ -463,8 +342,8 @@ function ComparisonView() {
 
   return (
     <div className="w-full h-screen flex bg-gray-50">
-      {/* Left Side: Panel + Flow */}
-      <div className="flex-1 flex flex-col border-r border-gray-200 relative">
+  {/* Left Side: Panel + Flow */}
+  <div ref={leftPaneRef} className="flex-1 flex flex-col border-r border-gray-200 relative">
         {/* Left Control Panel */}
         <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
           <h3 className="text-base font-semibold mb-4 text-gray-900">Left Network</h3>
@@ -620,6 +499,20 @@ function ComparisonView() {
               edges={leftEdges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
+              onNodeMouseEnter={(event: any, node: any) => {
+                setHoverTooltipSide('left')
+                setHoveredNode(node)
+                setHoverTooltipPos({ x: event.clientX, y: event.clientY })
+              }}
+              onNodeMouseMove={(event: any) => {
+                // update position while hovering
+                setHoverTooltipPos({ x: event.clientX, y: event.clientY })
+              }}
+              onNodeMouseLeave={() => {
+                setHoveredNode(null)
+                setHoverTooltipPos(null)
+                setHoverTooltipSide(null)
+              }}
               onNodeClick={(event, node) => {
                 console.log('🔵 ReactFlow onNodeClick triggered (left)', node.id)
                 onLeftNodeClick(event, node)
@@ -630,15 +523,11 @@ function ComparisonView() {
                 const target = event.target as HTMLElement
                 if (!target.closest('.react-flow__node') && !target.closest('.react-flow__edge')) {
                   setTimeout(() => {
-                    setTooltipSide((currentSide) => {
-                      if (currentSide === 'left') {
-                        console.log('🔵 Closing tooltip (pane clicked)')
-                        setClickedNode(null)
-                        setTooltipPosition(null)
-                        return null
-                      }
-                      return currentSide
-                    })
+                    if (clickedLeftNode) {
+                      console.log('🔵 Closing left tooltip (pane clicked)')
+                      setClickedLeftNode(null)
+                      setClickedLeftTooltipPos(null)
+                    }
                   }, 50)
                 }
               }}
@@ -655,24 +544,37 @@ function ComparisonView() {
               <MiniMap />
             </ReactFlow>
           </ReactFlowProvider>
-          {/* Left Tooltip */}
-          {false && clickedNode && tooltipPosition && tooltipSide === 'left' && (
-            <div
-              className="absolute z-50"
-              style={{
-                left: `${tooltipPosition!.x}px`,
-                top: `${tooltipPosition!.y}px`,
-                transform: 'translateX(-50%)',
-              }}
-            >
-              <TooltipContent node={clickedNode} side={tooltipSide} edges={leftEdges} optimization={leftOptimization.data} />
-            </div>
-          )}
+          {/* Left Hover Tooltip (adaptive placement) */}
+          {hoveredNode && hoverTooltipPos && hoverTooltipSide === 'left' && !clickedLeftNode && (() => {
+            const offset = 12
+            const margin = 8
+            const viewportH = (typeof window !== 'undefined') ? window.innerHeight : 800
+            const estimatedH = Math.min(Math.floor(viewportH * 0.6), Math.max(160, Math.floor(viewportH * 0.25)))
+            const desiredBelowTop = hoverTooltipPos.y + offset
+            const wouldOverflowBelow = desiredBelowTop + estimatedH > (viewportH - margin)
+            const placeBelow = !wouldOverflowBelow
+            const top = placeBelow ? `${desiredBelowTop}px` : `${Math.max(margin, hoverTooltipPos.y - offset - estimatedH)}px`
+            // Clamp horizontally so tooltip doesn't overflow the left pane
+            const viewportWidth = (typeof window !== 'undefined') ? window.innerWidth : 1024
+            const pane = leftPaneRect ?? { left: 8, width: Math.floor(viewportWidth / 2) - 16, right: Math.floor(viewportWidth / 2) - 8 } as any
+            const maxTooltipW = Math.min(480, Math.max(240, pane.width - 16))
+            const half = maxTooltipW / 2
+            let left = hoverTooltipPos.x - half
+            const minLeft = pane.left + 8
+            const maxLeft = (pane.left + pane.width) - maxTooltipW - 8
+            if (left < minLeft) left = minLeft
+            if (left > maxLeft) left = maxLeft
+            return (
+              <div className="fixed z-50 pointer-events-none" style={{ left: `${left}px`, top, maxWidth: `${maxTooltipW}px`, maxHeight: '60vh', overflow: 'auto' }}>
+                <TooltipContent node={hoveredNode} edges={leftEdges} optimization={leftOptimization.data} />
+              </div>
+            )
+          })()}
         </div>
       </div>
 
-      {/* Right Side: Panel + Flow */}
-      <div className="flex-1 flex flex-col">
+  {/* Right Side: Panel + Flow */}
+  <div ref={rightPaneRef} className="flex-1 flex flex-col">
         {/* Right Control Panel */}
         <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
           <h3 className="text-base font-semibold mb-4 text-gray-900">Right Network</h3>
@@ -825,6 +727,19 @@ function ComparisonView() {
               edges={rightEdges}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
+              onNodeMouseEnter={(event: any, node: any) => {
+                setHoverTooltipSide('right')
+                setHoveredNode(node)
+                setHoverTooltipPos({ x: event.clientX, y: event.clientY })
+              }}
+              onNodeMouseMove={(event: any) => {
+                setHoverTooltipPos({ x: event.clientX, y: event.clientY })
+              }}
+              onNodeMouseLeave={() => {
+                setHoveredNode(null)
+                setHoverTooltipPos(null)
+                setHoverTooltipSide(null)
+              }}
               onNodeClick={onRightNodeClick}
               onPaneClick={onRightPaneClick}
               fitView
@@ -840,21 +755,116 @@ function ComparisonView() {
               <MiniMap />
             </ReactFlow>
           </ReactFlowProvider>
-          {/* Right Tooltip */}
-          {false && clickedNode && tooltipPosition && tooltipSide === 'right' && (
-            <div
-              className="absolute z-50"
-              style={{
-                left: `${tooltipPosition!.x}px`,
-                top: `${tooltipPosition!.y}px`,
-                transform: 'translateX(-50%)',
-              }}
-            >
-              <TooltipContent node={clickedNode} side={tooltipSide} edges={rightEdges} optimization={rightOptimization.data} />
-            </div>
-          )}
+            {/* Right Hover Tooltip (adaptive placement) */}
+            {hoveredNode && hoverTooltipPos && hoverTooltipSide === 'right' && !clickedRightNode && (() => {
+              const offset = 12
+              const margin = 8
+              const viewportH = (typeof window !== 'undefined') ? window.innerHeight : 800
+              const estimatedH = Math.min(Math.floor(viewportH * 0.6), Math.max(160, Math.floor(viewportH * 0.25)))
+              const desiredBelowTop = hoverTooltipPos.y + offset
+              const wouldOverflowBelow = desiredBelowTop + estimatedH > (viewportH - margin)
+              const placeBelow = !wouldOverflowBelow
+              const top = placeBelow ? `${desiredBelowTop}px` : `${Math.max(margin, hoverTooltipPos.y - offset - estimatedH)}px`
+              const viewportWidth = (typeof window !== 'undefined') ? window.innerWidth : 1024
+              const pane = rightPaneRect ?? { left: Math.floor(viewportWidth / 2) + 8, width: Math.floor(viewportWidth / 2) - 16, right: viewportWidth - 8 } as any
+              const maxTooltipW = Math.min(480, Math.max(240, pane.width - 16))
+              const half = maxTooltipW / 2
+              let left = hoverTooltipPos.x - half
+              const minLeft = pane.left + 8
+              const maxLeft = (pane.left + pane.width) - maxTooltipW - 8
+              if (left < minLeft) left = minLeft
+              if (left > maxLeft) left = maxLeft
+              return (
+                <div className="fixed z-50 pointer-events-none" style={{ left: `${left}px`, top, maxWidth: `${maxTooltipW}px`, maxHeight: '60vh', overflow: 'auto' }}>
+                  <TooltipContent node={hoveredNode} edges={rightEdges} optimization={rightOptimization.data} />
+                </div>
+              )
+            })()}
+            
+            
         </div>
       </div>
+
+      {/* Global persistent click tooltip (top-level so it's never clipped) */}
+      {/* Left persistent tooltip (top-level) */}
+      {clickedLeftNode && clickedLeftTooltipPos && (() => {
+        const offset = 12
+        const margin = 8
+        const pos = clickedLeftTooltipPos
+        const viewportH = (typeof window !== 'undefined') ? window.innerHeight : 800
+        const estimatedH = Math.min(Math.floor(viewportH * 0.8), Math.max(240, Math.floor(viewportH * 0.3)))
+        const desiredBelowTop = pos.y + offset
+        const wouldOverflowBelow = desiredBelowTop + estimatedH > (viewportH - margin)
+        const placeBelow = !wouldOverflowBelow
+        const top = placeBelow ? `${desiredBelowTop}px` : `${Math.max(margin, pos.y - offset - estimatedH)}px`
+        const viewportWidth = (typeof window !== 'undefined') ? window.innerWidth : 1024
+        const pane = leftPaneRect ?? { left: 8, width: Math.floor(viewportWidth / 2) - 16 } as any
+        const maxTooltipW = Math.min(640, Math.max(320, pane.width - 16))
+        let left = pos.x - maxTooltipW / 2
+        const minLeft = pane.left + 8
+        const maxLeft = (pane.left + pane.width) - maxTooltipW - 8
+        if (left < minLeft) left = minLeft
+        if (left > maxLeft) left = maxLeft
+        return (
+          <div
+            className="fixed z-90 pointer-events-auto"
+            style={{ left: `${left}px`, top, maxWidth: `${maxTooltipW}px` }}
+          >
+            <div className="bg-white rounded-lg shadow-2xl border border-gray-200 p-3 max-h-[80vh] overflow-auto relative">
+              <button
+                onClick={() => { setClickedLeftNode(null); setClickedLeftTooltipPos(null) }}
+                className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 bg-transparent rounded p-1"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+              <div className="pointer-events-auto">
+                <TooltipContent node={clickedLeftNode} edges={leftEdges} optimization={leftOptimization.data} />
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Right persistent tooltip (top-level) */}
+      {clickedRightNode && clickedRightTooltipPos && (() => {
+        const offset = 12
+        const margin = 8
+        const pos = clickedRightTooltipPos
+        const viewportH = (typeof window !== 'undefined') ? window.innerHeight : 800
+        const estimatedH = Math.min(Math.floor(viewportH * 0.8), Math.max(240, Math.floor(viewportH * 0.3)))
+        const desiredBelowTop = pos.y + offset
+        const wouldOverflowBelow = desiredBelowTop + estimatedH > (viewportH - margin)
+        const placeBelow = !wouldOverflowBelow
+        const top = placeBelow ? `${desiredBelowTop}px` : `${Math.max(margin, pos.y - offset - estimatedH)}px`
+        const viewportWidth = (typeof window !== 'undefined') ? window.innerWidth : 1024
+        const pane = rightPaneRect ?? { left: Math.floor(viewportWidth / 2) + 8, width: Math.floor(viewportWidth / 2) - 16 } as any
+        const maxTooltipW = Math.min(640, Math.max(320, pane.width - 16))
+        let left = pos.x - maxTooltipW / 2
+        const minLeft = pane.left + 8
+        const maxLeft = (pane.left + pane.width) - maxTooltipW - 8
+        if (left < minLeft) left = minLeft
+        if (left > maxLeft) left = maxLeft
+        return (
+          <div
+            className="fixed z-90 pointer-events-auto"
+            style={{ left: `${left}px`, top, maxWidth: `${maxTooltipW}px` }}
+          >
+            <div className="bg-white rounded-lg shadow-2xl border border-gray-200 p-3 max-h-[80vh] overflow-auto relative">
+              <button
+                onClick={() => { setClickedRightNode(null); setClickedRightTooltipPos(null) }}
+                className="absolute top-2 right-2 text-gray-500 hover:text-gray-800 bg-transparent rounded p-1"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+              <div className="pointer-events-auto">
+                <TooltipContent node={clickedRightNode} edges={rightEdges} optimization={rightOptimization.data} />
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
     </div>
   )
