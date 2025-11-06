@@ -125,154 +125,192 @@ def solve_dc_opf(
     if not verbose:
         model.Params.OutputFlag = 0
     
+    # ========== Parameters ==========
+    baseMVA = 100.0  # Standard MATPOWER base
+    buses = bus_df['bus_i'].values
+    branches = branch_df.index
+    generators = gen_df.index
+    
     # Reference bus
     ref_bus = bus_df[bus_df['type'] == 3]['bus_i'].values[0]
     
     # Determine if line switching is enabled
     line_switching = 'line_switching' in constraints
-    angle_bound = 'angle_bound' in constraints
     
-    # Big-M value
-    M = 1000
-    if angle_bound:
-        # Use provided angle bound or default to 30 degrees
-        angle_bound_deg = angle_bound_degrees if angle_bound_degrees is not None else 30.0
-        MAX_ANGLE_DIFF_RAD = np.deg2rad(angle_bound_deg)
-        max_susceptance = (1.0 / branch_df['x']).max()
-        max_capacity = branch_df['rateA'].max()
-        M = max(2 * MAX_ANGLE_DIFF_RAD * max_susceptance, max_capacity * 2)
+    # Big-M values for switching constraints
+    if line_switching:
+        M_angle = np.radians(360)  # Conservative angle bound
+        M_flow = branch_df['rateA'].max() * 2  # Conservative flow bound
     
-    # Variables
-    Pg = model.addVars(gen_df.index, lb=0, name="Pg")
+    # ========== Decision Variables ==========
+    Pg = model.addVars(generators, lb=0, name="Pg")
     theta = model.addVars(
-        bus_df['bus_i'], 
+        buses, 
         lb=-GRB.INFINITY, 
         ub=GRB.INFINITY, 
         name="theta"
     )
     P_branch = model.addVars(
-        branch_df.index, 
+        branches, 
         lb=-GRB.INFINITY, 
+        ub=GRB.INFINITY,
         name="P_branch"
     )
     
     # Line switching binary variables
     if line_switching:
-        z = model.addVars(branch_df.index, vtype=GRB.BINARY, name="z")
-    else:
-        # All lines forced ON
-        z = {i: 1 for i in branch_df.index}
+        z = model.addVars(branches, vtype=GRB.BINARY, name="z")
+        # Warm start: all lines ON
+        for idx in branches:
+            z[idx].start = 1
     
-    # Objective: Minimize generation cost
+    # ========== 13a. Objective Function ==========
+    # Minimize total generation cost: ∑_{i ∈ N} ∑_{j ∈ G_i} c_j * p_j^g
     obj = gp.QuadExpr()
-    for idx, row in gencost_df.iterrows():
-        obj += row['c2'] * Pg[idx] * Pg[idx] + row['c1'] * Pg[idx] + row['c0']
+    for idx in generators:
+        c2 = gencost_df.loc[idx, 'c2']
+        c1 = gencost_df.loc[idx, 'c1']
+        c0 = gencost_df.loc[idx, 'c0']
+        obj += c2 * Pg[idx] * Pg[idx] + c1 * Pg[idx] + c0
+    
+    # Optional: small penalty for switching lines off
+    if line_switching:
+        for idx in branches:
+            obj += 1.0 * (1 - z[idx])
+    
     model.setObjective(obj, GRB.MINIMIZE)
     
-    # Constraint: Reference bus angle
-    model.addConstr(theta[ref_bus] == 0, name="ref_bus")
+    # ========== Constraints ==========
     
-    # Constraint: Generator limits
-    for idx, row in gen_df.iterrows():
-        model.addConstr(Pg[idx] >= row['Pmin'], name=f"Pg_min_{idx}")
-        model.addConstr(Pg[idx] <= row['Pmax'], name=f"Pg_max_{idx}")
-    
-    # Constraint: DC power flow
-    for idx, row in branch_df.iterrows():
-        fbus = row['fbus']
-        tbus = row['tbus']
-        x = row['x']
-        B = 1.0 / x  # Susceptance
-        
-        if line_switching:
-            # Big-M formulation
-            model.addConstr(
-                P_branch[idx] - B * (theta[fbus] - theta[tbus]) <= M * (1 - z[idx]),
-                name=f"flow_up_{idx}"
-            )
-            model.addConstr(
-                P_branch[idx] - B * (theta[fbus] - theta[tbus]) >= -M * (1 - z[idx]),
-                name=f"flow_lo_{idx}"
-            )
-            model.addConstr(P_branch[idx] <= M * z[idx], name=f"off_up_{idx}")
-            model.addConstr(P_branch[idx] >= -M * z[idx], name=f"off_lo_{idx}")
-        else:
-            # Simple power flow equation
-            model.addConstr(
-                P_branch[idx] == B * (theta[fbus] - theta[tbus]),
-                name=f"flow_{idx}"
-            )
-    
-    # Constraint: Angle bounds (if enabled)
-    if angle_bound:
-        # Use provided angle bound or default to 30 degrees
-        angle_bound_deg = angle_bound_degrees if angle_bound_degrees is not None else 30.0
-        MAX_ANGLE_DIFF_RAD = np.deg2rad(angle_bound_deg)
-        for idx, row in branch_df.iterrows():
-            fbus = row['fbus']
-            tbus = row['tbus']
-            
-            if line_switching:
-                model.addConstr(
-                    theta[fbus] - theta[tbus] <= MAX_ANGLE_DIFF_RAD * z[idx],
-                    name=f"ang_diff_up_{idx}"
-                )
-                model.addConstr(
-                    theta[fbus] - theta[tbus] >= -MAX_ANGLE_DIFF_RAD * z[idx],
-                    name=f"ang_diff_lo_{idx}"
-                )
-            else:
-                model.addConstr(
-                    theta[fbus] - theta[tbus] <= MAX_ANGLE_DIFF_RAD,
-                    name=f"ang_diff_up_{idx}"
-                )
-                model.addConstr(
-                    theta[fbus] - theta[tbus] >= -MAX_ANGLE_DIFF_RAD,
-                    name=f"ang_diff_lo_{idx}"
-                )
-    
-    # Constraint: Line capacity limits
-    capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
-    for idx, row in branch_df.iterrows():
-        rateA = row['rateA'] * capacity_multiplier  # Apply capacity multiplier
-        if rateA > 0:
-            if line_switching:
-                model.addConstr(P_branch[idx] <= rateA * z[idx], name=f"cap_up_{idx}")
-                model.addConstr(P_branch[idx] >= -rateA * z[idx], name=f"cap_lo_{idx}")
-            else:
-                model.addConstr(P_branch[idx] <= rateA, name=f"cap_up_{idx}")
-                model.addConstr(P_branch[idx] >= -rateA, name=f"cap_lo_{idx}")
-    
-    # Constraint: Power balance at each bus
+    # 13b. Power Balance at each bus (Nodal Power Conservation)
+    # ∑_{j ∈ G_i} p_j^g - ∑_{e ∈ E_i} p_e^f + ∑_{e ∈ E_i^R} p_e^f = ∑_{j ∈ L_i} p_j^d + g_i^s  ∀i ∈ N
     for idx, row in bus_df.iterrows():
         bus = row['bus_i']
         Pd = row['Pd']
+        Gs = row['Gs']  # Shunt conductance
         
         # Generation at this bus
         gen_at_bus = gen_df[gen_df['bus'] == bus].index.tolist()
-        gen_P = gp.quicksum(Pg[g] for g in gen_at_bus)
+        gen_P = gp.quicksum(Pg[g] for g in gen_at_bus) if gen_at_bus else 0
         
-        # Branch flows
+        # Branch flows: outflow from this bus
         branch_out = gp.quicksum(
             P_branch[br] for br in branch_df[branch_df['fbus'] == bus].index
         )
+        # Branch flows: inflow to this bus
         branch_in = gp.quicksum(
             P_branch[br] for br in branch_df[branch_df['tbus'] == bus].index
         )
         
         model.addConstr(
-            gen_P - Pd == branch_out - branch_in,
-            name=f"balance_{bus}"
+            gen_P - branch_out + branch_in == Pd + Gs,
+            name=f"power_balance_{int(bus)}"
         )
+    
+    # 13e. Reference Bus (fixes its voltage angle to zero)
+    # θ_ref = 0
+    model.addConstr(theta[ref_bus] == 0, name="reference_bus")
+    
+    # 13f. Generation Limits (active power generation limit at bus_i)
+    # p_i^g^min ≤ p_i^g ≤ p_i^g^max  ∀i ∈ G
+    for idx, row in gen_df.iterrows():
+        model.addConstr(Pg[idx] >= row['Pmin'], name=f"Pg_min_{idx}")
+        model.addConstr(Pg[idx] <= row['Pmax'], name=f"Pg_max_{idx}")
+    
+    # Branch constraints
+    for idx, row in branch_df.iterrows():
+        fbus = row['fbus']
+        tbus = row['tbus']
+        x = row['x']
+        rateA = row['rateA']
+        angmin_rad = np.radians(row['angmin'])
+        angmax_rad = np.radians(row['angmax'])
+        
+        # Skip zero reactance lines (should be handled separately if present)
+        if x == 0:
+            model.addConstr(theta[fbus] == theta[tbus], name=f"dc_flow_{idx}_zero_x")
+            continue
+        
+        if line_switching:
+            # ===== SWITCHING MODE: Big-M Formulation =====
+            
+            # 13c.ii. DC Power Flow with Big-M (active power flow on each branch)
+            # -M(1-z_e) ≤ -b_e(θ_i - θ_j)*baseMVA - p_e^f ≤ M(1-z_e)  ∀e = (i,j) ∈ E
+            # When z_e = 1 (line closed): -b_e(θ_i - θ_j)*baseMVA - p_e^f = 0
+            # When z_e = 0 (line open): constraint is relaxed by M
+            model.addConstr(
+                -(1/x) * (theta[fbus] - theta[tbus]) * baseMVA - P_branch[idx] <= M_flow * (1 - z[idx]),
+                name=f"dc_flow_upper_{idx}"
+            )
+            model.addConstr(
+                -(1/x) * (theta[fbus] - theta[tbus]) * baseMVA - P_branch[idx] >= -M_flow * (1 - z[idx]),
+                name=f"dc_flow_lower_{idx}"
+            )
+            
+            # 13d. Voltage Angle Difference Limits with Big-M
+            # ∆θ_e^min - M(1-z_e) ≤ θ_i - θ_j ≤ ∆θ_e^max + M(1-z_e)  ∀e = (i,j) ∈ E
+            # When z_e = 1 (line closed): angle differences are constrained
+            # When z_e = 0 (line open): angle differences are decoupled
+            if angmin_rad > -GRB.INFINITY:
+                model.addConstr(
+                    theta[fbus] - theta[tbus] >= angmin_rad - M_angle * (1 - z[idx]),
+                    name=f"angle_min_{idx}"
+                )
+            if angmax_rad < GRB.INFINITY:
+                model.addConstr(
+                    theta[fbus] - theta[tbus] <= angmax_rad + M_angle * (1 - z[idx]),
+                    name=f"angle_max_{idx}"
+                )
+            
+            # 13g. Flow Limits (upper thermal limits) with switching
+            # -\bar{S_e} · z_e ≤ p_e^f ≤ \bar{S_e} · z_e  ∀e ∈ E
+            # When z_e = 0 (line open): flow p_e^f = 0
+            # When z_e = 1 (line closed): flow is bounded by thermal limits
+            if rateA > 0:
+                capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
+                rateA_adjusted = rateA * capacity_multiplier
+                model.addConstr(P_branch[idx] <= rateA_adjusted * z[idx], name=f"line_max_{idx}")
+                model.addConstr(P_branch[idx] >= -rateA_adjusted * z[idx], name=f"line_min_{idx}")
+        
+        else:
+            # ===== BASELINE MODE: All lines fixed ON (z_e = 1) =====
+            
+            # 13c.i. DC Power Flow (standard, no Big-M)
+            # -b_e(θ_i - θ_j)*baseMVA - p_e^f = 0  ∀e = (i,j) ∈ E
+            model.addConstr(
+                -(1/x) * (theta[fbus] - theta[tbus]) * baseMVA - P_branch[idx] == 0,
+                name=f"dc_flow_{idx}"
+            )
+            
+            # 13d. Voltage Angle Difference Limits (standard)
+            # ∆θ_e^min ≤ θ_i - θ_j ≤ ∆θ_e^max  ∀e = (i,j) ∈ E
+            if angmin_rad > -GRB.INFINITY:
+                model.addConstr(
+                    theta[fbus] - theta[tbus] >= angmin_rad,
+                    name=f"angle_min_{idx}"
+                )
+            if angmax_rad < GRB.INFINITY:
+                model.addConstr(
+                    theta[fbus] - theta[tbus] <= angmax_rad,
+                    name=f"angle_max_{idx}"
+                )
+            
+            # 13g. Line flow thermal limits (standard)
+            # -\bar{S_e} ≤ p_e^f ≤ \bar{S_e}  ∀e ∈ E
+            if rateA > 0:
+                capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
+                rateA_adjusted = rateA * capacity_multiplier
+                model.addConstr(P_branch[idx] <= rateA_adjusted, name=f"line_max_{idx}")
+                model.addConstr(P_branch[idx] >= -rateA_adjusted, name=f"line_min_{idx}")
     
     # Solve
     model.optimize()
     
-    # Extract results
+    # ========== Extract Results ==========
     if model.status == GRB.OPTIMAL:
         # Generator outputs
         gen_outputs = {}
-        for idx in gen_df.index:
+        for idx in generators:
             gen_outputs[int(idx)] = {
                 'bus': int(gen_df.loc[idx, 'bus']),
                 'Pg': Pg[idx].X,
@@ -282,28 +320,27 @@ def solve_dc_opf(
         
         # Branch flows and switching status
         branch_flows = {}
-        for idx in branch_df.iterrows():
-            idx_val = idx[0]
-            row = idx[1]
-            z_value = z[idx_val].X if line_switching else 1
-            branch_flows[int(idx_val)] = {
+        for idx in branches:
+            row = branch_df.loc[idx]
+            z_value = z[idx].X if line_switching else 1
+            branch_flows[int(idx)] = {
                 'fbus': int(row['fbus']),
                 'tbus': int(row['tbus']),
-                'flow': P_branch[idx_val].X,
+                'flow': P_branch[idx].X,
                 'capacity': row['rateA'],
-                'utilization': abs(P_branch[idx_val].X) / row['rateA'] * 100 if row['rateA'] > 0 else 0,
+                'utilization': abs(P_branch[idx].X) / row['rateA'] * 100 if row['rateA'] > 0 else 0,
                 'status': z_value
             }
         
         # Bus angles
         bus_angles = {}
-        for bus in bus_df['bus_i']:
+        for bus in buses:
             bus_angles[int(bus)] = theta[bus].X * 180 / np.pi  # Convert to degrees
         
         result = {
             'status': 'optimal',
             'objective': model.ObjVal,
-            'total_generation': sum(Pg[i].X for i in gen_df.index),
+            'total_generation': sum(Pg[i].X for i in generators),
             'total_load': bus_df['Pd'].sum(),
             'generators': gen_outputs,
             'branches': branch_flows,
