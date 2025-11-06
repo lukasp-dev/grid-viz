@@ -181,9 +181,10 @@ const updatedEdges = updateEdgesWithResults(flowEdges, optimizationResult);
 ```
 
 **Edge Colors:**
-- 🟢 Green: < 70% utilization
-- 🟠 Orange: 70-90% utilization
-- 🔴 Red: > 90% utilization or OFF
+- 🟢 Green: < 95% utilization
+- 🟠 Orange: 95-100% utilization (not including 100%)
+- 🔴 Red: >= 100% utilization
+- 🟣 Purple: Line is OFF (dashed)
 
 ### updateNodesWithResults()
 Updates nodes with optimization results.

@@ -155,21 +155,21 @@ export function updateEdgesWithResults(
     let strokeDasharray: string | undefined = undefined;
     
     if (branch.status < 0.5) {
-      // Line is OFF - use purple/gray dashed line to distinguish from overutilization
+      // Line is OFF - use purple dashed line
       strokeColor = '#9333ea'; // Purple for OFF lines
       strokeWidth = 4;
       strokeDasharray = '12,8'; // Longer dashes for OFF
-    } else if (branch.utilization > 90) {
-      // Overutilization - red solid line
-      strokeColor = '#ef4444'; // Red for high utilization (>90%)
+    } else if (branch.utilization >= 100) {
+      // Overutilization - red solid line (100% or greater)
+      strokeColor = '#ef4444'; // Red for utilization >= 100%
       strokeWidth = 6; // Thicker for warning
-    } else if (branch.utilization > 70) {
-      // Medium utilization
-      strokeColor = '#f59e0b'; // Orange for medium utilization (70-90%)
+    } else if (branch.utilization >= 95 && branch.utilization < 100) {
+      // High utilization - orange solid line (95-100%, not including 100)
+      strokeColor = '#f59e0b'; // Orange for 95-100% utilization
       strokeWidth = 5;
     } else {
       // Normal utilization
-      strokeColor = '#10b981'; // Green for normal (<70%)
+      strokeColor = '#10b981'; // Green for normal (<95%)
       strokeWidth = 5;
     }
 

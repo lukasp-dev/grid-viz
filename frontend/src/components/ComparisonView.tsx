@@ -20,6 +20,38 @@ const defaultEdgeOptions = {
 const nodeTypes = {}
 const edgeTypes = {}
 
+// Legend Component
+function EdgeLegend() {
+  return (
+    <div className="absolute top-4 right-4 z-10 bg-white rounded-lg shadow-lg border border-gray-200 p-3 text-xs">
+      <div className="font-semibold text-gray-900 mb-2">Line Status</div>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-1.5 rounded" style={{ backgroundColor: '#ef4444' }}></div>
+          <span className="text-gray-700">≥ 100%</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-1.5 rounded" style={{ backgroundColor: '#f59e0b' }}></div>
+          <span className="text-gray-700">[95-100%)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-1.5 rounded" style={{ backgroundColor: '#10b981' }}></div>
+          <span className="text-gray-700">(0-95%)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <svg width="32" height="6" className="rounded">
+            <line x1="0" y1="3" x2="32" y2="3" stroke="#9333ea" strokeWidth="6" strokeDasharray="8 4" />
+          </svg>
+          <span className="text-gray-700">OFF (0%)</span>
+        </div>
+        <div className="flex items-center gap-2 pt-1 border-t border-gray-200">
+          <div className="w-8 h-1.5 rounded" style={{ backgroundColor: '#64748b' }}></div>
+          <span className="text-gray-700">No data</span>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Tooltip Content Component
 function TooltipContent({ node, edges, optimization }: any) {
@@ -162,7 +194,13 @@ function TooltipContent({ node, edges, optimization }: any) {
                       {edge.data.utilization !== undefined && (
                         <div className="flex justify-between">
                           <span>Util:</span>
-                          <span className={edge.data.utilization > 90 ? 'text-red-600 font-semibold' : ''}>
+                          <span className={
+                            edge.data.utilization >= 100 
+                              ? 'text-red-600 font-semibold' 
+                              : edge.data.utilization >= 95 && edge.data.utilization < 100
+                              ? 'text-orange-600 font-semibold'
+                              : ''
+                          }>
                             {edge.data.utilization.toFixed(1)}%
                           </span>
                         </div>
@@ -208,7 +246,13 @@ function TooltipContent({ node, edges, optimization }: any) {
                       {edge.data.utilization !== undefined && (
                         <div className="flex justify-between">
                           <span>Util:</span>
-                          <span className={edge.data.utilization > 90 ? 'text-red-600 font-semibold' : ''}>
+                          <span className={
+                            edge.data.utilization >= 100 
+                              ? 'text-red-600 font-semibold' 
+                              : edge.data.utilization >= 95 && edge.data.utilization < 100
+                              ? 'text-orange-600 font-semibold'
+                              : ''
+                          }>
                             {edge.data.utilization.toFixed(1)}%
                           </span>
                         </div>
@@ -528,7 +572,7 @@ function ComparisonView() {
               <input
                 type="range"
                 min="5"
-                max="60"
+                max="90"
                 value={leftAngleBound}
                 onChange={(e) => setLeftAngleBound(Number(e.target.value))}
                 disabled={!leftConstraints.includes('angle_bound')}
@@ -538,13 +582,13 @@ function ComparisonView() {
             <div>
               <div className="flex justify-between mb-1">
                 <p className="text-xs font-medium text-gray-700">Load Multiplier</p>
-                <p className="text-xs text-gray-600">{leftLoadMultiplier.toFixed(1)}x</p>
+                <p className="text-xs text-gray-600">{leftLoadMultiplier.toFixed(2)}x</p>
               </div>
               <input
                 type="range"
                 min="0.5"
                 max="2"
-                step="0.1"
+                step="0.01"
                 value={leftLoadMultiplier}
                 onChange={(e) => setLeftLoadMultiplier(Number(e.target.value))}
                 className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
@@ -655,6 +699,7 @@ function ComparisonView() {
               <MiniMap />
             </ReactFlow>
           </ReactFlowProvider>
+          <EdgeLegend />
           {/* Left Tooltip */}
           {false && clickedNode && tooltipPosition && tooltipSide === 'left' && (
             <div
@@ -733,7 +778,7 @@ function ComparisonView() {
               <input
                 type="range"
                 min="5"
-                max="60"
+                max="90"
                 value={rightAngleBound}
                 onChange={(e) => setRightAngleBound(Number(e.target.value))}
                 disabled={!rightConstraints.includes('angle_bound')}
@@ -743,13 +788,13 @@ function ComparisonView() {
             <div>
               <div className="flex justify-between mb-1">
                 <p className="text-xs font-medium text-gray-700">Load Multiplier</p>
-                <p className="text-xs text-gray-600">{rightLoadMultiplier.toFixed(1)}x</p>
+                <p className="text-xs text-gray-600">{rightLoadMultiplier.toFixed(2)}x</p>
               </div>
               <input
                 type="range"
                 min="0.5"
                 max="2"
-                step="0.1"
+                step="0.01"
                 value={rightLoadMultiplier}
                 onChange={(e) => setRightLoadMultiplier(Number(e.target.value))}
                 className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
@@ -840,6 +885,7 @@ function ComparisonView() {
               <MiniMap />
             </ReactFlow>
           </ReactFlowProvider>
+          <EdgeLegend />
           {/* Right Tooltip */}
           {false && clickedNode && tooltipPosition && tooltipSide === 'right' && (
             <div
