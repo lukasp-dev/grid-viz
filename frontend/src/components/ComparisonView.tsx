@@ -342,123 +342,187 @@ function ComparisonView() {
 
   return (
     <div className="w-full h-screen flex bg-gray-50">
-  {/* Left Side: Panel + Flow */}
-  <div ref={leftPaneRef} className="flex-1 flex flex-col border-r border-gray-200 relative">
+      {/* Common Control Panel (Shared Parameters) */}
+      <div className="w-80 bg-white border-r border-gray-200 p-5 overflow-y-auto">
+        <h3 className="text-base font-semibold mb-4 text-gray-900">Parameters</h3>
+        
+        {/* Constraints */}
+        <div className="mb-4">
+          <p className="text-xs font-medium text-gray-600 mb-2 uppercase tracking-wide">Constraints</p>
+          <div className="space-y-2">
+            <div className="flex items-center text-sm text-gray-700">
+              <input
+                type="checkbox"
+                id="common-angle-bound"
+                checked={leftConstraints.includes('angle_bound') && rightConstraints.includes('angle_bound')}
+                onChange={() => {
+                  const isChecked = leftConstraints.includes('angle_bound')
+                  if (isChecked) {
+                    toggleLeftConstraint('angle_bound')
+                    toggleRightConstraint('angle_bound')
+                  } else {
+                    toggleLeftConstraint('angle_bound')
+                    toggleRightConstraint('angle_bound')
+                  }
+                }}
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
+              />
+              <label htmlFor="common-angle-bound" className="cursor-pointer">
+                Angle Bounds
+              </label>
+            </div>
+            <div className="flex items-center text-sm text-gray-700">
+              <input
+                type="checkbox"
+                id="common-capacity"
+                checked={leftConstraints.includes('capacity') && rightConstraints.includes('capacity')}
+                onChange={() => {
+                  const isChecked = leftConstraints.includes('capacity')
+                  if (isChecked) {
+                    toggleLeftConstraint('capacity')
+                    toggleRightConstraint('capacity')
+                  } else {
+                    toggleLeftConstraint('capacity')
+                    toggleRightConstraint('capacity')
+                  }
+                }}
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
+              />
+              <label htmlFor="common-capacity" className="cursor-pointer">
+                Capacity Constraints
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Parameters */}
+        <div className="space-y-3 mb-4">
+          <div>
+            <div className="flex justify-between mb-1">
+              <p className="text-xs font-medium text-gray-700">Angle Bound</p>
+              <p className="text-xs text-gray-600">±{leftAngleBound}°</p>
+            </div>
+            <input
+              type="range"
+              min="5"
+              max="90"
+              value={leftAngleBound}
+              onChange={(e) => {
+                const value = Number(e.target.value)
+                setLeftAngleBound(value)
+                setRightAngleBound(value)
+              }}
+              disabled={!leftConstraints.includes('angle_bound')}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <div className="flex justify-between mb-1">
+              <p className="text-xs font-medium text-gray-700">Load Multiplier</p>
+              <p className="text-xs text-gray-600">{leftLoadMultiplier.toFixed(2)}x</p>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="2"
+              step="0.01"
+              value={leftLoadMultiplier}
+              onChange={(e) => {
+                const value = Number(e.target.value)
+                setLeftLoadMultiplier(value)
+                setRightLoadMultiplier(value)
+              }}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+            />
+          </div>
+          <div>
+            <div className="flex justify-between mb-1">
+              <p className="text-xs font-medium text-gray-700">Gen Capacity</p>
+              <p className="text-xs text-gray-600">{leftGenCapacity.toFixed(1)}x</p>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="2"
+              step="0.1"
+              value={leftGenCapacity}
+              onChange={(e) => {
+                const value = Number(e.target.value)
+                setLeftGenCapacity(value)
+                setRightGenCapacity(value)
+              }}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+            />
+          </div>
+          <div>
+            <div className="flex justify-between mb-1">
+              <p className="text-xs font-medium text-gray-700">Capacity Limit</p>
+              <p className="text-xs text-gray-600">{(leftCapacityLimit * 100).toFixed(0)}%</p>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="1.5"
+              step="0.1"
+              value={leftCapacityLimit}
+              onChange={(e) => {
+                const value = Number(e.target.value)
+                setLeftCapacityLimit(value)
+                setRightCapacityLimit(value)
+              }}
+              disabled={!leftConstraints.includes('capacity')}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+            />
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <p className="text-xs font-medium text-gray-600 mb-3 uppercase tracking-wide">Line Status</p>
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center">
+              <div className="w-8 h-1 bg-green-500 rounded mr-2"></div>
+              <span className="text-gray-700">&lt;95% utilization</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-8 h-1 bg-orange-500 rounded mr-2"></div>
+              <span className="text-gray-700">95% to &lt;100%</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-8 h-1 bg-red-500 rounded mr-2"></div>
+              <span className="text-gray-700">≥100% utilization</span>
+            </div>
+            <div className="flex items-center">
+              <div className="w-8 h-1 mr-2 relative">
+                <div className="absolute inset-0 border-t-2 border-purple-500 border-dashed"></div>
+              </div>
+              <span className="text-gray-700">Line OFF</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Left Side: Panel + Flow */}
+      <div ref={leftPaneRef} className="flex-1 flex flex-col border-r border-gray-200 relative">
         {/* Left Control Panel */}
         <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
           <h3 className="text-base font-semibold mb-4 text-gray-900">Left Network</h3>
           
-          {/* Constraints */}
+          {/* Line Switching Only */}
           <div className="mb-4">
-            <p className="text-xs font-medium text-gray-600 mb-2 uppercase tracking-wide">Constraints</p>
-            <div className="space-y-2">
-              <div className="flex items-center text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  id="left-line-switching"
-                  checked={leftConstraints.includes('line_switching')}
-                  onChange={() => {
-                    toggleLeftConstraint('line_switching')
-                  }}
-                  className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-                />
-                <label htmlFor="left-line-switching" className="cursor-pointer">
-                  Line Switching
-                </label>
-              </div>
-              <div className="flex items-center text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  id="left-angle-bound"
-                  checked={leftConstraints.includes('angle_bound')}
-                  onChange={() => {
-                    toggleLeftConstraint('angle_bound')
-                  }}
-                  className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-                />
-                <label htmlFor="left-angle-bound" className="cursor-pointer">
-                  Angle Bounds
-                </label>
-              </div>
-              <div className="flex items-center text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  id="left-capacity"
-                  checked={leftConstraints.includes('capacity')}
-                  onChange={() => {
-                    toggleLeftConstraint('capacity')
-                  }}
-                  className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-                />
-                <label htmlFor="left-capacity" className="cursor-pointer">
-                  Capacity Constraints
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* Parameters */}
-          <div className="space-y-3 mb-4">
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Angle Bound</p>
-                <p className="text-xs text-gray-600">±{leftAngleBound}°</p>
-              </div>
+            <div className="flex items-center text-sm text-gray-700">
               <input
-                type="range"
-                min="5"
-                max="60"
-                value={leftAngleBound}
-                onChange={(e) => setLeftAngleBound(Number(e.target.value))}
-                disabled={!leftConstraints.includes('angle_bound')}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                type="checkbox"
+                id="left-line-switching"
+                checked={leftConstraints.includes('line_switching')}
+                onChange={() => {
+                  toggleLeftConstraint('line_switching')
+                }}
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
               />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Load Multiplier</p>
-                <p className="text-xs text-gray-600">{leftLoadMultiplier.toFixed(1)}x</p>
-              </div>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={leftLoadMultiplier}
-                onChange={(e) => setLeftLoadMultiplier(Number(e.target.value))}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Gen Capacity</p>
-                <p className="text-xs text-gray-600">{leftGenCapacity.toFixed(1)}x</p>
-              </div>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={leftGenCapacity}
-                onChange={(e) => setLeftGenCapacity(Number(e.target.value))}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Capacity Limit</p>
-                <p className="text-xs text-gray-600">{(leftCapacityLimit * 100).toFixed(0)}%</p>
-              </div>
-              <input
-                type="range"
-                min="0.5"
-                max="1.5"
-                step="0.1"
-                value={leftCapacityLimit}
-                onChange={(e) => setLeftCapacityLimit(Number(e.target.value))}
-                disabled={!leftConstraints.includes('capacity')}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
-              />
+              <label htmlFor="left-line-switching" className="cursor-pointer">
+                Line Switching
+              </label>
             </div>
           </div>
 
@@ -573,120 +637,29 @@ function ComparisonView() {
         </div>
       </div>
 
-  {/* Right Side: Panel + Flow */}
-  <div ref={rightPaneRef} className="flex-1 flex flex-col">
+      {/* Right Side: Panel + Flow */}
+      <div ref={rightPaneRef} className="flex-1 flex flex-col">
         {/* Right Control Panel */}
         <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
           <h3 className="text-base font-semibold mb-4 text-gray-900">Right Network</h3>
           
-          {/* Constraints */}
+          {/* Line Switching Only */}
           <div className="mb-4">
-            <p className="text-xs font-medium text-gray-600 mb-2 uppercase tracking-wide">Constraints</p>
-            <div className="space-y-2">
-              <label className="flex items-center text-sm text-gray-700 cursor-pointer hover:text-gray-900">
-                <input
-                  type="checkbox"
-                  checked={rightConstraints.includes('line_switching')}
-                  onChange={(e) => {
-                    e.stopPropagation()
-                    toggleRightConstraint('line_switching')
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-                />
+            <div className="flex items-center text-sm text-gray-700">
+              <input
+                type="checkbox"
+                id="right-line-switching"
+                checked={rightConstraints.includes('line_switching')}
+                onChange={(e) => {
+                  e.stopPropagation()
+                  toggleRightConstraint('line_switching')
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
+              />
+              <label htmlFor="right-line-switching" className="cursor-pointer">
                 Line Switching
               </label>
-              <label className="flex items-center text-sm text-gray-700 cursor-pointer hover:text-gray-900">
-                <input
-                  type="checkbox"
-                  checked={rightConstraints.includes('angle_bound')}
-                  onChange={(e) => {
-                    e.stopPropagation()
-                    toggleRightConstraint('angle_bound')
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-                />
-                Angle Bounds
-              </label>
-              <label className="flex items-center text-sm text-gray-700 cursor-pointer hover:text-gray-900">
-                <input
-                  type="checkbox"
-                  checked={rightConstraints.includes('capacity')}
-                  onChange={(e) => {
-                    e.stopPropagation()
-                    toggleRightConstraint('capacity')
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-                />
-                Capacity Constraints
-              </label>
-            </div>
-          </div>
-
-          {/* Parameters */}
-          <div className="space-y-3 mb-4">
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Angle Bound</p>
-                <p className="text-xs text-gray-600">±{rightAngleBound}°</p>
-              </div>
-              <input
-                type="range"
-                min="5"
-                max="60"
-                value={rightAngleBound}
-                onChange={(e) => setRightAngleBound(Number(e.target.value))}
-                disabled={!rightConstraints.includes('angle_bound')}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
-              />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Load Multiplier</p>
-                <p className="text-xs text-gray-600">{rightLoadMultiplier.toFixed(1)}x</p>
-              </div>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={rightLoadMultiplier}
-                onChange={(e) => setRightLoadMultiplier(Number(e.target.value))}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Gen Capacity</p>
-                <p className="text-xs text-gray-600">{rightGenCapacity.toFixed(1)}x</p>
-              </div>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={rightGenCapacity}
-                onChange={(e) => setRightGenCapacity(Number(e.target.value))}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-            <div>
-              <div className="flex justify-between mb-1">
-                <p className="text-xs font-medium text-gray-700">Capacity Limit</p>
-                <p className="text-xs text-gray-600">{(rightCapacityLimit * 100).toFixed(0)}%</p>
-              </div>
-              <input
-                type="range"
-                min="0.5"
-                max="1.5"
-                step="0.1"
-                value={rightCapacityLimit}
-                onChange={(e) => setRightCapacityLimit(Number(e.target.value))}
-                disabled={!rightConstraints.includes('capacity')}
-                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
-              />
             </div>
           </div>
 

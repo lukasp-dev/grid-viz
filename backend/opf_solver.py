@@ -223,8 +223,13 @@ def solve_dc_opf(
         tbus = row['tbus']
         x = row['x']
         rateA = row['rateA']
-        angmin_rad = np.radians(row['angmin'])
-        angmax_rad = np.radians(row['angmax'])
+        # Use angle_bound_degrees if provided, otherwise use branch_df values
+        if angle_bound_degrees is not None:
+            angmin_rad = -np.radians(angle_bound_degrees)
+            angmax_rad = np.radians(angle_bound_degrees)
+        else:
+            angmin_rad = np.radians(row['angmin'])
+            angmax_rad = np.radians(row['angmax'])
         
         # Skip zero reactance lines (should be handled separately if present)
         if x == 0:

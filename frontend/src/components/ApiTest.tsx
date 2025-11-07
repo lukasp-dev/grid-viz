@@ -244,7 +244,7 @@ export function ApiTest() {
           <input
             type="range"
             min="5"
-            max="60"
+            max="90"
             step="1"
             value={angleBoundDegrees}
             onChange={(e) => setAngleBoundDegrees(parseFloat(e.target.value))}
@@ -253,7 +253,7 @@ export function ApiTest() {
           />
           <div className="flex justify-between text-xs text-gray-500 mt-1">
             <span>5°</span>
-            <span>60°</span>
+            <span>90°</span>
           </div>
         </div>
 
@@ -266,7 +266,7 @@ export function ApiTest() {
             type="range"
             min="0.1"
             max="2.0"
-            step="0.1"
+            step="0.01"
             value={loadMultiplier}
             onChange={(e) => setLoadMultiplier(parseFloat(e.target.value))}
             className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
