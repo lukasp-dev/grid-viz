@@ -316,11 +316,14 @@ def solve_dc_opf(
         # Generator outputs
         gen_outputs = {}
         for idx in generators:
+            # Get marginal cost (c1 coefficient) from gencost_df
+            c1 = gencost_df.loc[idx, 'c1']
             gen_outputs[int(idx)] = {
                 'bus': int(gen_df.loc[idx, 'bus']),
                 'Pg': Pg[idx].X,
                 'Pmax': gen_df.loc[idx, 'Pmax'],
-                'Pmin': gen_df.loc[idx, 'Pmin']
+                'Pmin': gen_df.loc[idx, 'Pmin'],
+                'cost': float(c1)  # Marginal cost ($/MW)
             }
         
         # Branch flows and switching status

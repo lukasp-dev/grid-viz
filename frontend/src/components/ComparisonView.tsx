@@ -152,6 +152,8 @@ function ComparisonView() {
   const [hoveredNode, setHoveredNode] = useState<any>(null)
   const [hoverTooltipPos, setHoverTooltipPos] = useState<{ x: number; y: number } | null>(null)
   const [hoverTooltipSide, setHoverTooltipSide] = useState<'left' | 'right' | null>(null)
+  // Generator comparison display toggle
+  const [showGeneratorComparison, setShowGeneratorComparison] = useState(false)
 
   // Refs and pane rects so we can clamp tooltips inside their pane and avoid crossing into adjacent network
   const leftPaneRef = useRef<HTMLDivElement | null>(null)
@@ -173,6 +175,19 @@ function ComparisonView() {
       window.removeEventListener('scroll', updateRects, true)
     }
   }, [])
+
+  // Ensure constraints are fixed: left always has no line_switching, right always has line_switching
+  useEffect(() => {
+    if (leftConstraints.includes('line_switching')) {
+      setLeftConstraints(prev => prev.filter(c => c !== 'line_switching'))
+    }
+  }, [leftConstraints])
+
+  useEffect(() => {
+    if (!rightConstraints.includes('line_switching')) {
+      setRightConstraints(prev => [...prev, 'line_switching'])
+    }
+  }, [rightConstraints])
 
   // Fetch topology (shared base structure)
   const { data: topology, isLoading: topologyLoading } = useTopology()
@@ -256,7 +271,17 @@ function ComparisonView() {
     rightOptimization.mutate(request)
   }
 
+  // Run both optimizations simultaneously
+  const runBothOptimizations = () => {
+    runLeftOptimization()
+    runRightOptimization()
+  }
+
   const toggleLeftConstraint = useCallback((constraint: string) => {
+    // Prevent toggling line_switching for left side (always disabled)
+    if (constraint === 'line_switching') {
+      return
+    }
     console.log('🟢 toggleLeftConstraint called', constraint)
     setLeftConstraints((prev) => {
       const newConstraints = prev.includes(constraint)
@@ -268,6 +293,10 @@ function ComparisonView() {
   }, [])
 
   const toggleRightConstraint = useCallback((constraint: string) => {
+    // Prevent toggling line_switching for right side (always enabled)
+    if (constraint === 'line_switching') {
+      return
+    }
     setRightConstraints((prev) =>
       prev.includes(constraint) ? prev.filter((c) => c !== constraint) : [...prev, constraint]
     )
@@ -329,6 +358,106 @@ function ComparisonView() {
       setClickedRightTooltipPos(null)
     }
   }
+
+  // Calculate generator comparison between left (disabled) and right (enabled) optimizations
+  const generatorComparison = useMemo(() => {
+    if (!leftOptimization.data?.generators || !rightOptimization.data?.generators) {
+      return null
+    }
+
+    const leftGens = leftOptimization.data.generators
+    const rightGens = rightOptimization.data.generators
+
+    // Create a map of bus -> generator for easier lookup
+    const leftByBus = new Map<number, { id: string; gen: any }>()
+    const rightByBus = new Map<number, { id: string; gen: any }>()
+
+    Object.entries(leftGens).forEach(([id, gen]: [string, any]) => {
+      leftByBus.set(gen.bus, { id, gen })
+    })
+
+    Object.entries(rightGens).forEach(([id, gen]: [string, any]) => {
+      rightByBus.set(gen.bus, { id, gen })
+    })
+
+    // Compare generators at the same bus
+    const comparisons: Array<{
+      bus: number
+      leftId: string
+      rightId: string
+      leftPg: number
+      rightPg: number
+      difference: number
+      percentChange: number
+    }> = []
+
+    // Find all unique buses
+    const allBuses = new Set([...leftByBus.keys(), ...rightByBus.keys()])
+
+    allBuses.forEach((bus) => {
+      const left = leftByBus.get(bus)
+      const right = rightByBus.get(bus)
+
+      if (left && right) {
+        const leftPg = left.gen.Pg || 0
+        const rightPg = right.gen.Pg || 0
+        const difference = rightPg - leftPg
+        const percentChange = leftPg > 0 ? (difference / leftPg) * 100 : (rightPg > 0 ? 100 : 0)
+
+        comparisons.push({
+          bus,
+          leftId: left.id,
+          rightId: right.id,
+          leftPg,
+          rightPg,
+          difference,
+          percentChange,
+        })
+      }
+    })
+
+    // Sort by absolute difference (largest changes first)
+    comparisons.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference))
+
+    return comparisons
+  }, [leftOptimization.data, rightOptimization.data])
+
+  // Find cheapest generator(s) from the system (excluding synchronous condensers with Pmax = 0)
+  const cheapestGenerators = useMemo(() => {
+    if (!leftOptimization.data?.generators) {
+      return null
+    }
+
+    const generators = leftOptimization.data.generators
+    const generatorsWithCost: Array<{ id: string; bus: number; cost: number }> = []
+
+    // Collect all generators with cost data and Pmax > 0 (exclude synchronous condensers)
+    Object.entries(generators).forEach(([id, gen]: [string, any]) => {
+      // Only include generators that can actually produce real power (Pmax > 0)
+      if (gen.cost !== undefined && gen.cost !== null && gen.Pmax > 0) {
+        generatorsWithCost.push({
+          id,
+          bus: gen.bus,
+          cost: gen.cost,
+        })
+      }
+    })
+
+    if (generatorsWithCost.length === 0) {
+      return null
+    }
+
+    // Find minimum cost
+    const minCost = Math.min(...generatorsWithCost.map((g) => g.cost))
+
+    // Find all generators with the minimum cost
+    const cheapest = generatorsWithCost.filter((g) => g.cost === minCost)
+
+    return {
+      cost: minCost,
+      generators: cheapest,
+    }
+  }, [leftOptimization.data])
 
   // (click helpers removed — TooltipContent provides connections/generator info for hover)
 
@@ -476,6 +605,127 @@ function ComparisonView() {
           </div>
         </div>
 
+        {/* Run Optimization Button */}
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <button
+            onClick={runBothOptimizations}
+            disabled={leftOptimization.isPending || rightOptimization.isPending}
+            className="w-full px-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {leftOptimization.isPending || rightOptimization.isPending
+              ? 'Running Optimizations...'
+              : 'Run Optimization'}
+          </button>
+        </div>
+
+        {/* Cheapest Generator Display */}
+        {cheapestGenerators && (
+          <div className="mt-6 pt-4 border-t border-gray-200">
+            <p className="text-xs font-medium text-gray-600 mb-2 uppercase tracking-wide">Cheapest Generator</p>
+            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-sm font-semibold text-gray-900">
+                  ${cheapestGenerators.cost.toFixed(2)}/MW
+                </span>
+                <span className="text-xs text-gray-600">at</span>
+              </div>
+              <div className="text-xs text-gray-700">
+                {cheapestGenerators.generators.length === 1 ? (
+                  <span>Bus {cheapestGenerators.generators[0].bus}</span>
+                ) : (
+                  <span>
+                    Buses: {cheapestGenerators.generators.map((g) => g.bus).join(', ')}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Generator Comparison Toggle */}
+        {leftOptimization.data && rightOptimization.data && (
+          <div className="mt-6 pt-4 border-t border-gray-200">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-700 cursor-pointer" htmlFor="gen-comparison-toggle">
+                Generator Comparison
+              </label>
+              <button
+                id="gen-comparison-toggle"
+                onClick={() => setShowGeneratorComparison(!showGeneratorComparison)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  showGeneratorComparison ? 'bg-gray-900' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    showGeneratorComparison ? 'translate-x-5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            {showGeneratorComparison && generatorComparison && (
+              <div className="mt-3 max-h-64 overflow-y-auto border border-gray-200 rounded-lg bg-white">
+                <div className="p-3 space-y-2">
+                  <div className="text-xs font-semibold text-gray-700 mb-2 sticky top-0 bg-white pb-2 border-b border-gray-200">
+                    <div className="grid grid-cols-5 gap-2">
+                      <span>Bus</span>
+                      <span className="text-left">Disabled</span>
+                      <span className="text-left">Enabled</span>
+                      <span className="text-center">Δ</span>
+                      <span className="text-center">%</span>
+                    </div>
+                  </div>
+                  {generatorComparison.map((comp) => (
+                    <div
+                      key={comp.bus}
+                      className={`text-xs py-1.5 px-2 rounded border ${
+                        comp.difference > 0
+                          ? 'bg-green-50 border-green-200'
+                          : comp.difference < 0
+                          ? 'bg-red-50 border-red-200'
+                          : 'bg-gray-50 border-gray-200'
+                      }`}
+                    >
+                      <div className="grid grid-cols-5 gap-2 items-center">
+                        <span className="font-medium text-gray-900">Bus {comp.bus}</span>
+                        <span className="text-gray-700">{comp.leftPg.toFixed(2)} MW</span>
+                        <span className="text-gray-700">{comp.rightPg.toFixed(2)} MW</span>
+                        <span
+                          className={`text-center font-semibold ${
+                            comp.difference > 0
+                              ? 'text-green-700'
+                              : comp.difference < 0
+                              ? 'text-red-700'
+                              : 'text-gray-600'
+                          }`}
+                        >
+                          {comp.difference > 0 ? '+' : ''}
+                          {comp.difference.toFixed(2)} MW
+                        </span>
+                        <span
+                          className={`text-center font-semibold ${
+                            comp.percentChange > 0
+                              ? 'text-green-700'
+                              : comp.percentChange < 0
+                              ? 'text-red-700'
+                              : 'text-gray-600'
+                          }`}
+                        >
+                          {comp.percentChange > 0 ? '+' : ''}
+                          {comp.percentChange.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {generatorComparison.length === 0 && (
+                    <p className="text-xs text-gray-500 text-center py-2">No generator data available for comparison</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Legend */}
         <div className="mt-6 pt-4 border-t border-gray-200">
           <p className="text-xs font-medium text-gray-600 mb-3 uppercase tracking-wide">Line Status</p>
@@ -506,33 +756,19 @@ function ComparisonView() {
       <div ref={leftPaneRef} className="flex-1 flex flex-col border-r border-gray-200 relative">
         {/* Left Control Panel */}
         <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
-          <h3 className="text-base font-semibold mb-4 text-gray-900">Left Network</h3>
+          <h3 className="text-base font-semibold mb-4 text-gray-900">Line Switching Disabled</h3>
           
-          {/* Line Switching Only */}
+          {/* Line Switching Status (read-only) */}
           <div className="mb-4">
             <div className="flex items-center text-sm text-gray-700">
-              <input
-                type="checkbox"
-                id="left-line-switching"
-                checked={leftConstraints.includes('line_switching')}
-                onChange={() => {
-                  toggleLeftConstraint('line_switching')
-                }}
-                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-              />
-              <label htmlFor="left-line-switching" className="cursor-pointer">
-                Line Switching
+              <div className="mr-2 w-4 h-4 bg-gray-300 rounded flex items-center justify-center">
+                <span className="text-xs text-gray-600">✕</span>
+              </div>
+              <label className="text-gray-600">
+                Line Switching: <span className="font-medium text-gray-900">Disabled</span>
               </label>
             </div>
           </div>
-
-          <button
-            onClick={runLeftOptimization}
-            disabled={leftOptimization.isPending}
-            className="w-full px-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-          >
-            {leftOptimization.isPending ? 'Running...' : 'Run Optimization'}
-          </button>
 
           {leftOptimization.data && (
             <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs">
@@ -640,36 +876,20 @@ function ComparisonView() {
       {/* Right Side: Panel + Flow */}
       <div ref={rightPaneRef} className="flex-1 flex flex-col">
         {/* Right Control Panel */}
-        <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
-          <h3 className="text-base font-semibold mb-4 text-gray-900">Right Network</h3>
+        <div className="min-h-64 max-h-96 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
+          <h3 className="text-base font-semibold mb-4 text-gray-900">Line Switching Enabled</h3>
           
-          {/* Line Switching Only */}
+          {/* Line Switching Status (read-only) */}
           <div className="mb-4">
             <div className="flex items-center text-sm text-gray-700">
-              <input
-                type="checkbox"
-                id="right-line-switching"
-                checked={rightConstraints.includes('line_switching')}
-                onChange={(e) => {
-                  e.stopPropagation()
-                  toggleRightConstraint('line_switching')
-                }}
-                onClick={(e) => e.stopPropagation()}
-                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900 cursor-pointer"
-              />
-              <label htmlFor="right-line-switching" className="cursor-pointer">
-                Line Switching
+              <div className="mr-2 w-4 h-4 bg-green-500 rounded flex items-center justify-center">
+                <span className="text-xs text-white">✓</span>
+              </div>
+              <label className="text-gray-600">
+                Line Switching: <span className="font-medium text-gray-900">Enabled</span>
               </label>
             </div>
           </div>
-
-          <button
-            onClick={runRightOptimization}
-            disabled={rightOptimization.isPending}
-            className="w-full px-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-          >
-            {rightOptimization.isPending ? 'Running...' : 'Run Optimization'}
-          </button>
 
           {rightOptimization.data && (
             <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs">

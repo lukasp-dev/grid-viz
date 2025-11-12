@@ -34,6 +34,7 @@ export interface GeneratorOutput {
   Pg: number;
   Pmax: number;
   Pmin: number;
+  cost?: number; // Marginal cost ($/MW)
 }
 
 export interface BranchFlow {
