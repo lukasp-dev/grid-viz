@@ -16,9 +16,7 @@ from pydantic import BaseModel
 import opf_solver
 
 # Set Gurobi license
-# Gurobi license file path - set this in your environment or update the path
-# os.environ["GRB_LICENSE_FILE"] = "/path/to/your/gurobi.lic"
-# For production, use environment variable: export GRB_LICENSE_FILE=/path/to/gurobi.lic
+os.environ["GRB_LICENSE_FILE"] = "/Users/a/Desktop/VIP/sc-opf/API key/gurobi.lic"
 
 # Initialize FastAPI
 app = FastAPI(
@@ -164,7 +162,14 @@ async def optimize(request: OptimizeRequest):
         return result
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_detail = str(e)
+        error_traceback = traceback.format_exc()
+        print("=" * 70)
+        print("❌ Optimization Error:")
+        print(error_traceback)
+        print("=" * 70)
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.get("/api/constraints")
