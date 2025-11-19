@@ -271,11 +271,17 @@ def solve_dc_opf(
             # -\bar{S_e} · z_e ≤ p_e^f ≤ \bar{S_e} · z_e  ∀e ∈ E
             # When z_e = 0 (line open): flow p_e^f = 0
             # When z_e = 1 (line closed): flow is bounded by thermal limits
+            capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
             if rateA > 0:
-                capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
                 rateA_adjusted = rateA * capacity_multiplier
                 model.addConstr(P_branch[idx] <= rateA_adjusted * z[idx], name=f"line_max_{idx}")
                 model.addConstr(P_branch[idx] >= -rateA_adjusted * z[idx], name=f"line_min_{idx}")
+            else:
+                # For lines with zero capacity, force flow to zero when line is off
+                # Use a large M value to allow flow when line is on
+                M_flow_zero = M_flow if line_switching else 1000.0
+                model.addConstr(P_branch[idx] <= M_flow_zero * z[idx], name=f"line_max_{idx}")
+                model.addConstr(P_branch[idx] >= -M_flow_zero * z[idx], name=f"line_min_{idx}")
         
         else:
             # ===== BASELINE MODE: All lines fixed ON (z_e = 1) =====
@@ -345,11 +351,23 @@ def solve_dc_opf(
         for bus in buses:
             bus_angles[int(bus)] = theta[bus].X * 180 / np.pi  # Convert to degrees
         
+        # Calculate totals
+        total_gen = sum(Pg[i].X for i in generators)
+        total_load = bus_df['Pd'].sum()
+        total_shunt = bus_df['Gs'].sum()
+        total_consumption = total_load + total_shunt
+        
+        # Verify power balance (should be zero in DC-OPF)
+        power_balance_error = total_gen - total_consumption
+        
         result = {
             'status': 'optimal',
             'objective': model.ObjVal,
-            'total_generation': sum(Pg[i].X for i in generators),
-            'total_load': bus_df['Pd'].sum(),
+            'total_generation': total_gen,
+            'total_load': total_load,
+            'total_shunt': total_shunt,
+            'total_consumption': total_consumption,
+            'power_balance_error': power_balance_error,
             'generators': gen_outputs,
             'branches': branch_flows,
             'bus_angles': bus_angles,

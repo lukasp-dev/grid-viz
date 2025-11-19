@@ -51,6 +51,9 @@ export interface OptimizationResult {
   objective?: number;
   total_generation?: number;
   total_load?: number;
+  total_shunt?: number;
+  total_consumption?: number;
+  power_balance_error?: number;
   generators?: Record<string, GeneratorOutput>;
   branches?: Record<string, BranchFlow>;
   bus_angles?: Record<string, number>;

@@ -393,6 +393,78 @@ export function ApiTest() {
               </div>
             )}
 
+            {/* Power Balance Verification */}
+            {optimization.data.status === 'optimal' && (
+              <div className={`mb-6 p-4 rounded-lg border-2 ${
+                optimization.data.power_balance_error !== undefined && 
+                Math.abs(optimization.data.power_balance_error) > 0.01
+                  ? 'bg-yellow-50 border-yellow-300'
+                  : 'bg-green-50 border-green-300'
+              }`}>
+                <h4 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  {optimization.data.power_balance_error !== undefined && 
+                   Math.abs(optimization.data.power_balance_error) > 0.01 ? (
+                    <span className="text-yellow-600">⚠️ Power Balance Warning</span>
+                  ) : (
+                    <span className="text-green-600">✅ Power Balance Verified</span>
+                  )}
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-gray-600">Total Generation</p>
+                    <p className="text-base font-semibold text-gray-900">
+                      {optimization.data.total_generation?.toFixed(6) ?? 'N/A'} MW
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Total Load</p>
+                    <p className="text-base font-semibold text-gray-900">
+                      {optimization.data.total_load?.toFixed(6) ?? 'N/A'} MW
+                    </p>
+                  </div>
+                  {optimization.data.total_shunt !== undefined && (
+                    <div>
+                      <p className="text-gray-600">Total Shunt</p>
+                      <p className="text-base font-semibold text-gray-900">
+                        {optimization.data.total_shunt.toFixed(6)} MW
+                      </p>
+                    </div>
+                  )}
+                  {optimization.data.total_consumption !== undefined && (
+                    <div>
+                      <p className="text-gray-600">Total Consumption (Load + Shunt)</p>
+                      <p className="text-base font-semibold text-gray-900">
+                        {optimization.data.total_consumption.toFixed(6)} MW
+                      </p>
+                    </div>
+                  )}
+                  {optimization.data.power_balance_error !== undefined && (
+                    <div className="md:col-span-2">
+                      <p className="text-gray-600">Power Balance Error</p>
+                      <p className={`text-lg font-bold ${
+                        Math.abs(optimization.data.power_balance_error) > 0.01
+                          ? 'text-yellow-700'
+                          : 'text-green-700'
+                      }`}>
+                        {optimization.data.power_balance_error > 0 ? '+' : ''}
+                        {optimization.data.power_balance_error.toFixed(6)} MW
+                      </p>
+                      {Math.abs(optimization.data.power_balance_error) > 0.01 && (
+                        <p className="text-xs text-yellow-700 mt-1">
+                          ⚠️ Generation and consumption do not match! Expected difference &lt; 0.01 MW
+                        </p>
+                      )}
+                      {Math.abs(optimization.data.power_balance_error) <= 0.01 && (
+                        <p className="text-xs text-green-700 mt-1">
+                          ✅ Power balance is correct (within tolerance)
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Generator Outputs */}
             {optimization.data.generators && (
               <details className="mt-4">
