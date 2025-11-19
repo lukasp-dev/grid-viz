@@ -68,3 +68,9 @@ __pycache__/
 dist/
 *.egg-info/
 
+# Test scripts and temporary files
+backend/test_*.sh
+backend/start_server.sh
+backend/*_report.txt
+backend/test_power_balance.py
+

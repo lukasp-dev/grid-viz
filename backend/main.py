@@ -16,9 +16,7 @@ from pydantic import BaseModel
 import opf_solver
 
 # Set Gurobi license
-# Gurobi license file path - set this in your environment or update the path
-# os.environ["GRB_LICENSE_FILE"] = "/path/to/your/gurobi.lic"
-# For production, use environment variable: export GRB_LICENSE_FILE=/path/to/gurobi.lic
+# os.environ["GRB_LICENSE_FILE"] = "/Users/a/Desktop/VIP/sc-opf/API key/gurobi.lic"
 
 # Initialize FastAPI
 app = FastAPI(
@@ -57,6 +55,9 @@ class OptimizeResponse(BaseModel):
     objective: Optional[float] = None
     total_generation: Optional[float] = None
     total_load: Optional[float] = None
+    total_shunt: Optional[float] = None
+    total_consumption: Optional[float] = None
+    power_balance_error: Optional[float] = None
     generators: Optional[dict] = None
     branches: Optional[dict] = None
     bus_angles: Optional[dict] = None
@@ -161,10 +162,33 @@ async def optimize(request: OptimizeRequest):
             capacity_limit_multiplier=request.capacity_limit_multiplier
         )
         
+        # Log power balance verification
+        if result.get('status') == 'optimal':
+            print("=" * 70)
+            print("📊 Power Balance Verification:")
+            print(f"  Total Generation: {result.get('total_generation', 0):.2f} MW")
+            print(f"  Total Load: {result.get('total_load', 0):.2f} MW")
+            print(f"  Total Shunt: {result.get('total_shunt', 0):.2f} MW")
+            print(f"  Total Consumption: {result.get('total_consumption', 0):.2f} MW")
+            balance_error = result.get('power_balance_error', 0)
+            print(f"  Power Balance Error: {balance_error:.6f} MW")
+            if abs(balance_error) > 0.01:
+                print(f"  ⚠️  WARNING: Power balance mismatch detected!")
+            else:
+                print(f"  ✅ Power balance verified (within tolerance)")
+            print("=" * 70)
+        
         return result
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_detail = str(e)
+        error_traceback = traceback.format_exc()
+        print("=" * 70)
+        print("❌ Optimization Error:")
+        print(error_traceback)
+        print("=" * 70)
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.get("/api/constraints")
