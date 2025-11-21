@@ -351,6 +351,13 @@ def solve_dc_opf(
         for bus in buses:
             bus_angles[int(bus)] = theta[bus].X * 180 / np.pi  # Convert to degrees
         
+        # Bus loads (actual loads used in optimization, including multiplier)
+        bus_loads = {}
+        for bus in buses:
+            bus_row = bus_df[bus_df['bus_i'] == bus]
+            if not bus_row.empty:
+                bus_loads[int(bus)] = float(bus_row['Pd'].values[0])
+        
         # Calculate totals
         total_gen = sum(Pg[i].X for i in generators)
         total_load = bus_df['Pd'].sum()
@@ -371,6 +378,7 @@ def solve_dc_opf(
             'generators': gen_outputs,
             'branches': branch_flows,
             'bus_angles': bus_angles,
+            'bus_loads': bus_loads,  # Add bus loads
             'lines_on': sum(1 for b in branch_flows.values() if b['status'] > 0.5) if line_switching else len(branch_df),
             'lines_off': sum(1 for b in branch_flows.values() if b['status'] < 0.5) if line_switching else 0
         }

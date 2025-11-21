@@ -208,7 +208,7 @@ export function updateNodesWithResults(
   nodes: FlowNode[],
   result: OptimizationResult
 ): FlowNode[] {
-  if (!result.generators && !result.bus_angles) return nodes;
+  if (!result.generators && !result.bus_angles && !result.bus_loads) return nodes;
 
   return nodes.map((node) => {
     const nodeId = Number(node.id);
@@ -221,12 +221,16 @@ export function updateNodesWithResults(
     // Get bus angle
     const angle = result.bus_angles ? result.bus_angles[node.id] : undefined;
 
+    // Get bus load (actual load used in optimization, including multiplier)
+    const load = result.bus_loads ? result.bus_loads[node.id] : undefined;
+
     return {
       ...node,
       data: {
         ...node.data,
         generation: generator?.Pg,
         angle: angle,
+        load: load !== undefined ? load : node.data.load,  // Update load if available
       },
     };
   });

@@ -57,6 +57,7 @@ export interface OptimizationResult {
   generators?: Record<string, GeneratorOutput>;
   branches?: Record<string, BranchFlow>;
   bus_angles?: Record<string, number>;
+  bus_loads?: Record<string, number>;  // Add bus loads
   lines_on?: number;
   lines_off?: number;
   message?: string;
