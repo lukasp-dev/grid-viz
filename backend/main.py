@@ -16,7 +16,7 @@ from pydantic import BaseModel
 import opf_solver
 
 # Set Gurobi license
-# os.environ["GRB_LICENSE_FILE"] = "/Users/a/Desktop/VIP/sc-opf/API key/gurobi.lic"
+#os.environ["GRB_LICENSE_FILE"] = ""
 
 # Initialize FastAPI
 app = FastAPI(
