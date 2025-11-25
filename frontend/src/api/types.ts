@@ -99,6 +99,7 @@ export interface FlowNode {
   id: string;
   type: string;
   position: { x: number; y: number };
+  style?: React.CSSProperties;
   data: {
     label: string;
     busType: 'slack' | 'generator' | 'load';

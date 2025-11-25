@@ -939,11 +939,11 @@ function ComparisonView() {
             const maxLeft = (pane.left + pane.width) - maxTooltipW - 8
             if (left < minLeft) left = minLeft
             if (left > maxLeft) left = maxLeft
-              return (
-                <div className="fixed z-50 pointer-events-none" style={{ left: `${left}px`, top, maxWidth: `${maxTooltipW}px` }}>
-                  <EdgeTooltipContent edge={hoveredEdge} optimization={leftOptimization.data} />
-                </div>
-              )
+            return (
+              <div className="fixed z-50 pointer-events-none" style={{ left: `${left}px`, top, maxWidth: `${maxTooltipW}px` }}>
+                <EdgeTooltipContent edge={hoveredEdge} optimization={leftOptimization.data} />
+              </div>
+            )
           })()}
           {/* Left Hover Tooltip (adaptive placement) */}
           {hoveredNode && hoverTooltipPos && hoverTooltipSide === 'left' && !clickedLeftNode && (() => {
