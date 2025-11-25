@@ -46,6 +46,16 @@ export interface BranchFlow {
   status: number; // 1 = on, 0 = off
 }
 
+export interface SlackValues {
+  angle: Record<string, { positive: number; negative: number }>;
+  flow: Record<string, { positive: number; negative: number }>;
+}
+
+export interface ConstraintDuals {
+  angle: Record<string, { min: number | null; max: number | null }>;
+  flow: Record<string, { min: number | null; max: number | null }>;
+}
+
 export interface OptimizationResult {
   status: 'optimal' | 'infeasible' | 'error';
   objective?: number;
@@ -57,7 +67,11 @@ export interface OptimizationResult {
   generators?: Record<string, GeneratorOutput>;
   branches?: Record<string, BranchFlow>;
   bus_angles?: Record<string, number>;
-  bus_loads?: Record<string, number>;  // Add bus loads
+  bus_loads?: Record<string, number>;
+  slack_values?: SlackValues;
+  constraint_duals?: ConstraintDuals;
+  forced_generator?: number;
+  disabled_lines?: number[];
   lines_on?: number;
   lines_off?: number;
   message?: string;
@@ -71,6 +85,13 @@ export interface OptimizeRequest {
   load_multiplier?: number; // Multiply all loads by this factor (default: 1.0)
   generator_capacity_multiplier?: number; // Multiply generator max capacity (default: 1.0)
   capacity_limit_multiplier?: number; // Multiply branch capacity limits (default: 1.0, e.g., 0.8 = 80% cut)
+  use_slack?: boolean;
+  slack_penalty_angle?: number;
+  slack_penalty_flow?: number;
+  slack_angle_fraction?: number;
+  slack_flow_fraction?: number;
+  force_second_cheapest?: boolean;
+  switch_off_lines?: number[];
 }
 
 // Constraint info

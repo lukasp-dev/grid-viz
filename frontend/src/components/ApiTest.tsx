@@ -3,7 +3,7 @@
  * Component to test all API endpoints and data transformation
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   useHealth,
   useTopology,
@@ -26,6 +26,13 @@ export function ApiTest() {
   const [loadMultiplier, setLoadMultiplier] = useState<number>(1.0);
   const [generatorCapacityMultiplier, setGeneratorCapacityMultiplier] = useState<number>(1.0);
   const [capacityLimitMultiplier, setCapacityLimitMultiplier] = useState<number>(1.0);
+  const [useSlack, setUseSlack] = useState<boolean>(false);
+  const [slackPenaltyAngle, setSlackPenaltyAngle] = useState<number>(10000);
+  const [slackPenaltyFlow, setSlackPenaltyFlow] = useState<number>(10000);
+  const [slackAngleFraction, setSlackAngleFraction] = useState<number>(0);
+  const [slackFlowFraction, setSlackFlowFraction] = useState<number>(0);
+  const [forceSecondCheapest, setForceSecondCheapest] = useState<boolean>(false);
+  const [switchOffLines, setSwitchOffLines] = useState<string>('');
 
   // Fetch queries
   const { data: connection, isLoading: connectionLoading } = useConnection();
@@ -38,6 +45,11 @@ export function ApiTest() {
 
   // Handle optimization
   const runOptimization = () => {
+    const parsedSwitchLines = switchOffLines
+      .split(',')
+      .map((line) => parseInt(line.trim(), 10))
+      .filter((line) => !Number.isNaN(line));
+
     const request: OptimizeRequest = {
       constraints: selectedConstraints as any,
       verbose: false,
@@ -46,6 +58,13 @@ export function ApiTest() {
       load_multiplier: loadMultiplier,
       generator_capacity_multiplier: generatorCapacityMultiplier,
       capacity_limit_multiplier: selectedConstraints.includes('capacity') ? capacityLimitMultiplier : undefined,
+      use_slack: useSlack,
+      slack_penalty_angle: useSlack ? slackPenaltyAngle : undefined,
+      slack_penalty_flow: useSlack ? slackPenaltyFlow : undefined,
+      slack_angle_fraction: useSlack ? slackAngleFraction : undefined,
+      slack_flow_fraction: useSlack ? slackFlowFraction : undefined,
+      force_second_cheapest: forceSecondCheapest || undefined,
+      switch_off_lines: parsedSwitchLines.length > 0 ? parsedSwitchLines : undefined,
     };
     console.log('🚀 Running optimization with request:', request);
     optimization.mutate(request);
@@ -78,6 +97,63 @@ export function ApiTest() {
   const stats = optimization.data
     ? calculateStatistics(optimization.data)
     : null;
+
+  type SlackEntry = {
+    lineId: string
+    values: { positive: number; negative: number }
+    category: 'angle' | 'flow'
+    direction: 'positive' | 'negative'
+  }
+
+  const slackSummary = useMemo<{
+    positiveAngle: SlackEntry[]
+    negativeAngle: SlackEntry[]
+    positiveFlow: SlackEntry[]
+    negativeFlow: SlackEntry[]
+  } | null>(() => {
+    if (!optimization.data?.slack_values) return null;
+    const { slack_values } = optimization.data;
+    const angleEntries = Object.entries(slack_values.angle ?? {});
+    const flowEntries = Object.entries(slack_values.flow ?? {});
+    const positiveAngle = angleEntries
+      .filter(([, v]) => (v as { positive: number; negative: number }).positive > 1e-6)
+      .map(([lineId, v]) => ({
+        lineId,
+        values: v as { positive: number; negative: number },
+        category: 'angle' as const,
+        direction: 'positive' as const,
+      }));
+    const negativeAngle = angleEntries
+      .filter(([, v]) => (v as { positive: number; negative: number }).negative > 1e-6)
+      .map(([lineId, v]) => ({
+        lineId,
+        values: v as { positive: number; negative: number },
+        category: 'angle' as const,
+        direction: 'negative' as const,
+      }));
+    const positiveFlow = flowEntries
+      .filter(([, v]) => (v as { positive: number; negative: number }).positive > 1e-6)
+      .map(([lineId, v]) => ({
+        lineId,
+        values: v as { positive: number; negative: number },
+        category: 'flow' as const,
+        direction: 'positive' as const,
+      }));
+    const negativeFlow = flowEntries
+      .filter(([, v]) => (v as { positive: number; negative: number }).negative > 1e-6)
+      .map(([lineId, v]) => ({
+        lineId,
+        values: v as { positive: number; negative: number },
+        category: 'flow' as const,
+        direction: 'negative' as const,
+      }));
+    return {
+      positiveAngle,
+      negativeAngle,
+      positiveFlow,
+      negativeFlow,
+    };
+  }, [optimization.data]);
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -331,6 +407,139 @@ export function ApiTest() {
             Controls how much power each line can carry (e.g., 80% = conservative, 120% = relaxed)
           </p>
         </div>
+
+        {/* Slack & Advanced Controls */}
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <h3 className="text-base font-semibold text-gray-900 mb-4">Advanced Controls</h3>
+
+          <div className="flex items-center mb-4">
+            <input
+              id="use-slack"
+              type="checkbox"
+              checked={useSlack}
+              onChange={(e) => setUseSlack(e.target.checked)}
+              className="w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900"
+            />
+            <label htmlFor="use-slack" className="ml-3 text-sm font-medium text-gray-900">
+              Enable slack variables on angle / flow constraints
+            </label>
+          </div>
+
+          {useSlack && (
+            <div className="space-y-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Angle Slack Penalty (cost per degree)
+                  </label>
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={slackPenaltyAngle}
+                    onChange={(e) => setSlackPenaltyAngle(Number(e.target.value))}
+                    className="w-full rounded-md border-gray-300 focus:border-gray-900 focus:ring-gray-900 text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Higher penalty = slack is more expensive (default 10,000).
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Flow Slack Penalty (cost per MW)
+                  </label>
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={slackPenaltyFlow}
+                    onChange={(e) => setSlackPenaltyFlow(Number(e.target.value))}
+                    className="w-full rounded-md border-gray-300 focus:border-gray-900 focus:ring-gray-900 text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Higher penalty = slack is more expensive (default 10,000).
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Max Angle Slack (% of limit) — {(slackAngleFraction * 100).toFixed(3)}%
+                  </label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={0.001}
+                    step={0.0001}
+                    value={slackAngleFraction}
+                    onChange={(e) => setSlackAngleFraction(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>0%</span>
+                    <span>0.05%</span>
+                    <span>0.10%</span>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    0% = no violation. 0.10% ≈ +0.03° on a 30° limit. Suggested: 0–0.10%.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Max Flow Slack (% of limit) — {(slackFlowFraction * 100).toFixed(3)}%
+                  </label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={0.001}
+                    step={0.0001}
+                    value={slackFlowFraction}
+                    onChange={(e) => setSlackFlowFraction(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>0%</span>
+                    <span>0.05%</span>
+                    <span>0.10%</span>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    0% = no overload. 0.10% allows small MW violation to reveal tight lines.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center mb-4">
+            <input
+              id="force-second-gen"
+              type="checkbox"
+              checked={forceSecondCheapest}
+              onChange={(e) => setForceSecondCheapest(e.target.checked)}
+              className="w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900"
+            />
+            <label htmlFor="force-second-gen" className="ml-3 text-sm font-medium text-gray-900">
+              Force 2nd-cheapest generator to its maximum output
+            </label>
+          </div>
+
+          <div className="mb-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Switch off specific lines (comma separated IDs)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g., 10, 58, 79"
+              value={switchOffLines}
+              onChange={(e) => setSwitchOffLines(e.target.value)}
+              className="w-full rounded-md border-gray-300 focus:border-gray-900 focus:ring-gray-900 text-sm"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Leave empty to keep all lines enabled. Works even without line-switching constraint.
+            </p>
+          </div>
+        </div>
       </section>
 
       {/* Optimization */}
@@ -539,6 +748,66 @@ export function ApiTest() {
                   </div>
                 </div>
               </details>
+            )}
+
+            {/* Slack / Dual information */}
+            {optimization.data.slack_values ? (
+              <details className="mt-4">
+                <summary className="cursor-pointer font-medium text-gray-900 mb-3 hover:text-gray-700">
+                  Slack Usage &amp; Duals
+                </summary>
+                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 text-sm">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <p className="font-medium text-gray-900 mb-1">Angle Slacks</p>
+                      <p className="text-gray-700">
+                        + : {slackSummary?.positiveAngle.length ?? 0} lines &nbsp;/&nbsp; - : {slackSummary?.negativeAngle.length ?? 0} lines
+                      </p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-900 mb-1">Flow Slacks</p>
+                      <p className="text-gray-700">
+                        + : {slackSummary?.positiveFlow.length ?? 0} lines &nbsp;/&nbsp; - : {slackSummary?.negativeFlow.length ?? 0} lines
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Lines listed below exceeded their limits and used slack to remain feasible. Dual values are available through the API response for deeper analysis.
+                  </p>
+                  <div className="max-h-64 overflow-auto space-y-3">
+                    {[...(slackSummary?.positiveAngle ?? []), ...(slackSummary?.negativeAngle ?? []), ...(slackSummary?.positiveFlow ?? []), ...(slackSummary?.negativeFlow ?? [])]
+                      .slice(0, 50)
+                      .map((entry) => (
+                        <div
+                          key={`slack-${entry.category}-${entry.lineId}-${entry.direction}`}
+                          className="bg-white p-3 rounded border border-gray-200 flex justify-between text-xs"
+                        >
+                          <span className="font-medium text-gray-900">
+                            Line {entry.lineId} ({entry.category === 'angle' ? 'Angle' : 'Flow'})
+                          </span>
+                          <span className="text-gray-700">
+                            {entry.direction === 'positive'
+                              ? `+${entry.values.positive.toFixed(5)}`
+                              : `-${Math.abs(entry.values.negative).toFixed(5)}`}
+                            {entry.category === 'angle' ? '°' : ' MW'}
+                          </span>
+                        </div>
+                      ))}
+                    {slackSummary &&
+                      slackSummary.positiveAngle.length +
+                        slackSummary.negativeAngle.length +
+                        slackSummary.positiveFlow.length +
+                        slackSummary.negativeFlow.length ===
+                        0 && (
+                        <p className="text-center text-xs text-gray-500">No slack was used in this run.</p>
+                      )}
+                  </div>
+                </div>
+              </details>
+            ) : (
+              <p className="mt-4 text-xs text-gray-500">
+                Enable slack variables in the Advanced Controls section to see slack usage and dual summaries.
+              </p>
             )}
           </div>
         )}
