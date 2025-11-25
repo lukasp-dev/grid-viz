@@ -100,7 +100,14 @@ def solve_dc_opf(
     constraints: List[str] = None,
     verbose: bool = False,
     angle_bound_degrees: Optional[float] = None,
-    capacity_limit_multiplier: Optional[float] = None
+    capacity_limit_multiplier: Optional[float] = None,
+    use_slack: bool = False,
+    slack_penalty_angle: float = 1e4,
+    slack_penalty_flow: float = 1e4,
+    force_second_cheapest: bool = False,
+    disabled_lines: Optional[List[int]] = None,
+    slack_angle_fraction: Optional[float] = None,
+    slack_flow_fraction: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Solve DC-OPF with specified constraints
@@ -136,6 +143,7 @@ def solve_dc_opf(
     
     # Determine if line switching is enabled
     line_switching = 'line_switching' in constraints
+    disabled_lines_set = set(disabled_lines or [])
     
     # Big-M values for switching constraints
     if line_switching:
@@ -177,6 +185,23 @@ def solve_dc_opf(
     if line_switching:
         for idx in branches:
             obj += 1.0 * (1 - z[idx])
+
+    # Slack variables (angle / flow)
+    s_angle_pos = s_angle_neg = s_flow_pos = s_flow_neg = None
+    if use_slack:
+        s_angle_pos = model.addVars(branches, lb=0, name="s_angle_pos")
+        s_angle_neg = model.addVars(branches, lb=0, name="s_angle_neg")
+        s_flow_pos = model.addVars(branches, lb=0, name="s_flow_pos")
+        s_flow_neg = model.addVars(branches, lb=0, name="s_flow_neg")
+        obj += slack_penalty_angle * gp.quicksum(
+            s_angle_pos[idx] + s_angle_neg[idx] for idx in branches
+        )
+        obj += slack_penalty_flow * gp.quicksum(
+            s_flow_pos[idx] + s_flow_neg[idx] for idx in branches
+        )
+    # Optional limits on slack usage (fractions of base limits)
+    angle_slack_fraction_cap = slack_angle_fraction if slack_angle_fraction is not None else None
+    flow_slack_fraction_cap = slack_flow_fraction if slack_flow_fraction is not None else None
     
     model.setObjective(obj, GRB.MINIMIZE)
     
@@ -217,12 +242,38 @@ def solve_dc_opf(
         model.addConstr(Pg[idx] >= row['Pmin'], name=f"Pg_min_{idx}")
         model.addConstr(Pg[idx] <= row['Pmax'], name=f"Pg_max_{idx}")
     
+    # Optionally force the second-cheapest generator to its maximum
+    forced_generator_idx: Optional[int] = None
+    if force_second_cheapest:
+        merit_order = []
+        for idx, row in gen_df.iterrows():
+            if row['status'] == 0 or row['Pmax'] <= 0:
+                continue
+            cost = gencost_df.loc[idx, 'c1']
+            merit_order.append((cost, int(idx)))
+        merit_order.sort(key=lambda item: (item[0], item[1]))
+        if len(merit_order) >= 2:
+            forced_generator_idx = merit_order[1][1]
+            model.addConstr(
+                Pg[forced_generator_idx] == gen_df.loc[forced_generator_idx, 'Pmax'],
+                name="force_second_cheapest_generator"
+            )
+
+    # Track constraint references for dual extraction
+    angle_constraints: Dict[int, Dict[str, gp.Constr]] = {}
+    flow_constraints: Dict[int, Dict[str, gp.Constr]] = {}
+
     # Branch constraints
     for idx, row in branch_df.iterrows():
         fbus = row['fbus']
         tbus = row['tbus']
         x = row['x']
         rateA = row['rateA']
+        if idx in disabled_lines_set:
+            model.addConstr(P_branch[idx] == 0, name=f"disabled_line_flow_{idx}")
+            if line_switching:
+                model.addConstr(z[idx] == 0, name=f"disabled_line_switch_{idx}")
+            continue
         # Use angle_bound_degrees if provided, otherwise use branch_df values
         if angle_bound_degrees is not None:
             angmin_rad = -np.radians(angle_bound_degrees)
@@ -231,6 +282,15 @@ def solve_dc_opf(
             angmin_rad = np.radians(row['angmin'])
             angmax_rad = np.radians(row['angmax'])
         
+        # Determine per-line slack caps if requested
+        angle_slack_cap_pos = None
+        angle_slack_cap_neg = None
+        if use_slack and angle_slack_fraction_cap is not None:
+            if angmax_rad < GRB.INFINITY:
+                angle_slack_cap_pos = max(0.0, abs(angmax_rad)) * angle_slack_fraction_cap
+            if angmin_rad > -GRB.INFINITY:
+                angle_slack_cap_neg = max(0.0, abs(angmin_rad)) * angle_slack_fraction_cap
+
         # Skip zero reactance lines (should be handled separately if present)
         if x == 0:
             model.addConstr(theta[fbus] == theta[tbus], name=f"dc_flow_{idx}_zero_x")
@@ -256,32 +316,67 @@ def solve_dc_opf(
             # ∆θ_e^min - M(1-z_e) ≤ θ_i - θ_j ≤ ∆θ_e^max + M(1-z_e)  ∀e = (i,j) ∈ E
             # When z_e = 1 (line closed): angle differences are constrained
             # When z_e = 0 (line open): angle differences are decoupled
+            angle_constraints[idx] = {}
             if angmin_rad > -GRB.INFINITY:
-                model.addConstr(
-                    theta[fbus] - theta[tbus] >= angmin_rad - M_angle * (1 - z[idx]),
+                constr = model.addConstr(
+                    theta[fbus] - theta[tbus] >= angmin_rad - M_angle * (1 - z[idx]) - (s_angle_neg[idx] if use_slack else 0),
                     name=f"angle_min_{idx}"
                 )
+                angle_constraints[idx]['min'] = constr
             if angmax_rad < GRB.INFINITY:
-                model.addConstr(
-                    theta[fbus] - theta[tbus] <= angmax_rad + M_angle * (1 - z[idx]),
+                constr = model.addConstr(
+                    theta[fbus] - theta[tbus] <= angmax_rad + M_angle * (1 - z[idx]) + (s_angle_pos[idx] if use_slack else 0),
                     name=f"angle_max_{idx}"
+                )
+                angle_constraints[idx]['max'] = constr
+            if use_slack and angle_slack_cap_pos is not None:
+                model.addConstr(
+                    s_angle_pos[idx] <= angle_slack_cap_pos,
+                    name=f"angle_slack_pos_cap_{idx}"
+                )
+            if use_slack and angle_slack_cap_neg is not None:
+                model.addConstr(
+                    s_angle_neg[idx] <= angle_slack_cap_neg,
+                    name=f"angle_slack_neg_cap_{idx}"
                 )
             
             # 13g. Flow Limits (upper thermal limits) with switching
             # -\bar{S_e} · z_e ≤ p_e^f ≤ \bar{S_e} · z_e  ∀e ∈ E
             # When z_e = 0 (line open): flow p_e^f = 0
             # When z_e = 1 (line closed): flow is bounded by thermal limits
+            flow_constraints[idx] = {}
             if rateA > 0:
                 capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
                 rateA_adjusted = rateA * capacity_multiplier
-                model.addConstr(P_branch[idx] <= rateA_adjusted * z[idx], name=f"line_max_{idx}")
-                model.addConstr(P_branch[idx] >= -rateA_adjusted * z[idx], name=f"line_min_{idx}")
+                upper_constr = model.addConstr(
+                    P_branch[idx] <= rateA_adjusted * z[idx] + (s_flow_pos[idx] if use_slack else 0),
+                    name=f"line_max_{idx}"
+                )
+                lower_constr = model.addConstr(
+                    P_branch[idx] >= -rateA_adjusted * z[idx] - (s_flow_neg[idx] if use_slack else 0),
+                    name=f"line_min_{idx}"
+                )
+                flow_constraints[idx]['max'] = upper_constr
+                flow_constraints[idx]['min'] = lower_constr
+                if use_slack:
+                    flow_cap_ratio = flow_slack_fraction_cap if flow_slack_fraction_cap is not None else 1.0
+                    flow_cap_expr = rateA_adjusted * flow_cap_ratio * z[idx]
+                    model.addConstr(
+                        s_flow_pos[idx] <= flow_cap_expr,
+                        name=f"line_slack_pos_limit_{idx}"
+                    )
+                    model.addConstr(
+                        s_flow_neg[idx] <= flow_cap_expr,
+                        name=f"line_slack_neg_limit_{idx}"
+                    )
             else:
                 # For lines with zero capacity, force flow to zero when line is off
                 # Use a large M value to allow flow when line is on
                 M_flow_zero = M_flow if line_switching else 1000.0
-                model.addConstr(P_branch[idx] <= M_flow_zero * z[idx], name=f"line_max_{idx}")
-                model.addConstr(P_branch[idx] >= -M_flow_zero * z[idx], name=f"line_min_{idx}")
+                upper_constr = model.addConstr(P_branch[idx] <= M_flow_zero * z[idx], name=f"line_max_{idx}")
+                lower_constr = model.addConstr(P_branch[idx] >= -M_flow_zero * z[idx], name=f"line_min_{idx}")
+                flow_constraints[idx]['max'] = upper_constr
+                flow_constraints[idx]['min'] = lower_constr
         
         else:
             # ===== BASELINE MODE: All lines fixed ON (z_e = 1) =====
@@ -295,24 +390,57 @@ def solve_dc_opf(
             
             # 13d. Voltage Angle Difference Limits (standard)
             # ∆θ_e^min ≤ θ_i - θ_j ≤ ∆θ_e^max  ∀e = (i,j) ∈ E
+            angle_constraints[idx] = {}
             if angmin_rad > -GRB.INFINITY:
-                model.addConstr(
-                    theta[fbus] - theta[tbus] >= angmin_rad,
+                constr = model.addConstr(
+                    theta[fbus] - theta[tbus] >= angmin_rad - (s_angle_neg[idx] if use_slack else 0),
                     name=f"angle_min_{idx}"
                 )
+                angle_constraints[idx]['min'] = constr
             if angmax_rad < GRB.INFINITY:
-                model.addConstr(
-                    theta[fbus] - theta[tbus] <= angmax_rad,
+                constr = model.addConstr(
+                    theta[fbus] - theta[tbus] <= angmax_rad + (s_angle_pos[idx] if use_slack else 0),
                     name=f"angle_max_{idx}"
+                )
+                angle_constraints[idx]['max'] = constr
+            if use_slack and angle_slack_cap_pos is not None:
+                model.addConstr(
+                    s_angle_pos[idx] <= angle_slack_cap_pos,
+                    name=f"angle_slack_pos_cap_{idx}"
+                )
+            if use_slack and angle_slack_cap_neg is not None:
+                model.addConstr(
+                    s_angle_neg[idx] <= angle_slack_cap_neg,
+                    name=f"angle_slack_neg_cap_{idx}"
                 )
             
             # 13g. Line flow thermal limits (standard)
             # -\bar{S_e} ≤ p_e^f ≤ \bar{S_e}  ∀e ∈ E
+            flow_constraints[idx] = {}
             if rateA > 0:
                 capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
                 rateA_adjusted = rateA * capacity_multiplier
-                model.addConstr(P_branch[idx] <= rateA_adjusted, name=f"line_max_{idx}")
-                model.addConstr(P_branch[idx] >= -rateA_adjusted, name=f"line_min_{idx}")
+                upper_constr = model.addConstr(
+                    P_branch[idx] <= rateA_adjusted + (s_flow_pos[idx] if use_slack else 0),
+                    name=f"line_max_{idx}"
+                )
+                lower_constr = model.addConstr(
+                    P_branch[idx] >= -rateA_adjusted - (s_flow_neg[idx] if use_slack else 0),
+                    name=f"line_min_{idx}"
+                )
+                flow_constraints[idx]['max'] = upper_constr
+                flow_constraints[idx]['min'] = lower_constr
+                if use_slack:
+                    flow_cap_ratio = flow_slack_fraction_cap if flow_slack_fraction_cap is not None else 1.0
+                    cap_value = rateA_adjusted * flow_cap_ratio
+                    model.addConstr(
+                        s_flow_pos[idx] <= cap_value,
+                        name=f"line_slack_pos_limit_{idx}"
+                    )
+                    model.addConstr(
+                        s_flow_neg[idx] <= cap_value,
+                        name=f"line_slack_neg_limit_{idx}"
+                    )
     
     # Solve
     model.optimize()
@@ -336,7 +464,10 @@ def solve_dc_opf(
         branch_flows = {}
         for idx in branches:
             row = branch_df.loc[idx]
-            z_value = z[idx].X if line_switching else 1
+            if idx in disabled_lines_set:
+                z_value = 0
+            else:
+                z_value = z[idx].X if line_switching else 1
             branch_flows[int(idx)] = {
                 'fbus': int(row['fbus']),
                 'tbus': int(row['tbus']),
@@ -448,6 +579,40 @@ def solve_dc_opf(
                         'thermal_dual_min': branch_info['thermal_limit_dual_min']
                     })
         
+        slack_values = None
+        if use_slack:
+            slack_values = {
+                'angle': {
+                    int(idx): {
+                        'positive': float(s_angle_pos[idx].X),
+                        'negative': float(s_angle_neg[idx].X)
+                    } for idx in branches
+                },
+                'flow': {
+                    int(idx): {
+                        'positive': float(s_flow_pos[idx].X),
+                        'negative': float(s_flow_neg[idx].X)
+                    } for idx in branches
+                }
+            }
+        constraint_duals = None
+        # Dual values are only meaningful for LPs (line switching introduces binaries)
+        if not line_switching:
+            constraint_duals = {
+                'angle': {
+                    int(idx): {
+                        'min': float(refs['min'].Pi) if 'min' in refs else None,
+                        'max': float(refs['max'].Pi) if 'max' in refs else None
+                    } for idx, refs in angle_constraints.items()
+                },
+                'flow': {
+                    int(idx): {
+                        'min': float(refs['min'].Pi) if 'min' in refs else None,
+                        'max': float(refs['max'].Pi) if 'max' in refs else None
+                    } for idx, refs in flow_constraints.items()
+                }
+            }
+
         result = {
             'status': 'optimal',
             'objective': model.ObjVal,
@@ -456,8 +621,13 @@ def solve_dc_opf(
             'generators': gen_outputs,
             'branches': branch_flows,
             'bus_angles': bus_angles,
-            'lines_on': sum(1 for b in branch_flows.values() if b['status'] > 0.5) if line_switching else len(branch_df),
-            'lines_off': sum(1 for b in branch_flows.values() if b['status'] < 0.5) if line_switching else 0,
+            'bus_loads': bus_loads,  # Add bus loads
+            'slack_values': slack_values,
+            'constraint_duals': constraint_duals,
+            'forced_generator': forced_generator_idx,
+            'disabled_lines': sorted(list(disabled_lines_set)) if disabled_lines_set else [],
+            'lines_on': sum(1 for b in branch_flows.values() if b['status'] > 0.5) if line_switching else len(branch_df) - len(disabled_lines_set),
+            'lines_off': sum(1 for b in branch_flows.values() if b['status'] < 0.5) if line_switching else len(disabled_lines_set),
             'dual_variables': {
                 'all_branches': dual_variables,
                 'non_zero_duals': non_zero_duals,

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 import opf_solver
 
 # Set Gurobi license
-#os.environ["GRB_LICENSE_FILE"] = ""
+os.environ["GRB_LICENSE_FILE"] = "/Users/a/Desktop/VIP/sc-opf/API key/gurobi.lic"
 
 # Initialize FastAPI
 app = FastAPI(
@@ -166,6 +166,13 @@ class OptimizeRequest(BaseModel):
     load_multiplier: Optional[float] = None  # Multiply all loads by this factor (default: 1.0)
     generator_capacity_multiplier: Optional[float] = None  # Multiply generator max capacity (default: 1.0)
     capacity_limit_multiplier: Optional[float] = None  # Multiply branch capacity limits (default: 1.0, e.g., 0.8 = 80% capacity cut)
+    use_slack: bool = False  # Enable slack variables on angle/flow constraints
+    slack_penalty_angle: Optional[float] = None
+    slack_penalty_flow: Optional[float] = None
+    force_second_cheapest: bool = False
+    switch_off_lines: Optional[List[int]] = None
+    slack_angle_fraction: Optional[float] = None  # Allow angle slack as fraction of angle limit (e.g., 0.001 = 0.1%)
+    slack_flow_fraction: Optional[float] = None  # Allow flow slack as fraction of line limit
 
 
 class OptimizeResponse(BaseModel):
@@ -179,6 +186,11 @@ class OptimizeResponse(BaseModel):
     generators: Optional[dict] = None
     branches: Optional[dict] = None
     bus_angles: Optional[dict] = None
+    bus_loads: Optional[dict] = None
+    slack_values: Optional[dict] = None
+    constraint_duals: Optional[dict] = None
+    forced_generator: Optional[int] = None
+    disabled_lines: Optional[List[int]] = None
     lines_on: Optional[int] = None
     lines_off: Optional[int] = None
     dual_variables: Optional[dict] = None  # Contains all dual variables and non-zero duals
@@ -271,6 +283,8 @@ async def optimize(request: OptimizeRequest):
             print(f"✅ Gen capacity adjusted: {original_capacity:.2f} MW → {new_capacity:.2f} MW (x{request.generator_capacity_multiplier})")
         
         # Run optimization
+        slack_penalty_angle = request.slack_penalty_angle if request.slack_penalty_angle is not None else 1e4
+        slack_penalty_flow = request.slack_penalty_flow if request.slack_penalty_flow is not None else 1e4
         result = opf_solver.solve_dc_opf(
             bus_df=modified_bus_df,
             gen_df=modified_gen_df,
@@ -279,7 +293,14 @@ async def optimize(request: OptimizeRequest):
             constraints=request.constraints,
             verbose=request.verbose,
             angle_bound_degrees=request.angle_bound_degrees,
-            capacity_limit_multiplier=request.capacity_limit_multiplier
+            capacity_limit_multiplier=request.capacity_limit_multiplier,
+            use_slack=request.use_slack,
+            slack_penalty_angle=slack_penalty_angle,
+            slack_penalty_flow=slack_penalty_flow,
+            force_second_cheapest=request.force_second_cheapest,
+            disabled_lines=request.switch_off_lines,
+            slack_angle_fraction=request.slack_angle_fraction,
+            slack_flow_fraction=request.slack_flow_fraction
         )
         
         # Log power balance verification

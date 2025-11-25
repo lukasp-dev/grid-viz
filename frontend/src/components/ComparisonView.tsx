@@ -20,6 +20,14 @@ const defaultEdgeOptions = {
 const nodeTypes = {}
 const edgeTypes = {}
 
+const parseLineList = (value: string) =>
+  value
+    .split(',')
+    .map((line) => parseInt(line.trim(), 10))
+    .filter((line) => !Number.isNaN(line))
+
+const formatLineList = (lines: number[]) => (lines.length ? lines.join(', ') : '')
+
 
 // Edge Tooltip Content Component
 function EdgeTooltipContent({ edge, optimization }: any) {
@@ -189,6 +197,13 @@ function ComparisonView() {
   const [leftLoadMultiplier, setLeftLoadMultiplier] = useState(1.0)
   const [leftGenCapacity, setLeftGenCapacity] = useState(1.0)
   const [leftCapacityLimit, setLeftCapacityLimit] = useState(1.0)
+  const [leftUseSlack, setLeftUseSlack] = useState(false)
+  const [leftSlackPenaltyAngle, setLeftSlackPenaltyAngle] = useState(10000)
+  const [leftSlackPenaltyFlow, setLeftSlackPenaltyFlow] = useState(10000)
+  const [leftSlackAngleFraction, setLeftSlackAngleFraction] = useState(0)
+  const [leftSlackFlowFraction, setLeftSlackFlowFraction] = useState(0)
+  const [leftForceSecondGen, setLeftForceSecondGen] = useState(false)
+  const [leftDisabledLines, setLeftDisabledLines] = useState('')
   
   // Right side parameters
   const [rightConstraints, setRightConstraints] = useState<string[]>(['line_switching'])
@@ -196,6 +211,13 @@ function ComparisonView() {
   const [rightLoadMultiplier, setRightLoadMultiplier] = useState(1.0)
   const [rightGenCapacity, setRightGenCapacity] = useState(1.0)
   const [rightCapacityLimit, setRightCapacityLimit] = useState(1.0)
+  const [rightUseSlack, setRightUseSlack] = useState(true)
+  const [rightSlackPenaltyAngle, setRightSlackPenaltyAngle] = useState(10000)
+  const [rightSlackPenaltyFlow, setRightSlackPenaltyFlow] = useState(10000)
+  const [rightSlackAngleFraction, setRightSlackAngleFraction] = useState(0)
+  const [rightSlackFlowFraction, setRightSlackFlowFraction] = useState(0)
+  const [rightForceSecondGen, setRightForceSecondGen] = useState(false)
+  const [rightDisabledLines, setRightDisabledLines] = useState('')
 
   // Tooltip state (click-based) - allow independent left and right persistent overlays
   const [clickedLeftNode, setClickedLeftNode] = useState<any>(null)
@@ -311,6 +333,13 @@ function ComparisonView() {
       capacity_limit_multiplier: leftConstraints.includes('capacity')
         ? leftCapacityLimit
         : undefined,
+      use_slack: leftUseSlack,
+      slack_penalty_angle: leftUseSlack ? leftSlackPenaltyAngle : undefined,
+      slack_penalty_flow: leftUseSlack ? leftSlackPenaltyFlow : undefined,
+      slack_angle_fraction: leftUseSlack ? leftSlackAngleFraction : undefined,
+      slack_flow_fraction: leftUseSlack ? leftSlackFlowFraction : undefined,
+      force_second_cheapest: leftForceSecondGen || undefined,
+      switch_off_lines: parseLineList(leftDisabledLines),
     }
     leftOptimization.mutate(request)
   }
@@ -325,6 +354,13 @@ function ComparisonView() {
       capacity_limit_multiplier: rightConstraints.includes('capacity')
         ? rightCapacityLimit
         : undefined,
+      use_slack: rightUseSlack,
+      slack_penalty_angle: rightUseSlack ? rightSlackPenaltyAngle : undefined,
+      slack_penalty_flow: rightUseSlack ? rightSlackPenaltyFlow : undefined,
+      slack_angle_fraction: rightUseSlack ? rightSlackAngleFraction : undefined,
+      slack_flow_fraction: rightUseSlack ? rightSlackFlowFraction : undefined,
+      force_second_cheapest: rightForceSecondGen || undefined,
+      switch_off_lines: parseLineList(rightDisabledLines),
     }
     rightOptimization.mutate(request)
   }
@@ -828,6 +864,107 @@ function ComparisonView() {
             </div>
           </div>
 
+          <div className="space-y-3 text-xs text-gray-700">
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900"
+                checked={leftUseSlack}
+                onChange={(e) => setLeftUseSlack(e.target.checked)}
+              />
+              <span>Use slack variables (angle & flow)</span>
+            </label>
+            {leftUseSlack && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Angle Penalty</p>
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={leftSlackPenaltyAngle}
+                    onChange={(e) => setLeftSlackPenaltyAngle(Number(e.target.value))}
+                    className="w-full rounded border-gray-300 focus:ring-gray-900 focus:border-gray-900 text-xs"
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Flow Penalty</p>
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={leftSlackPenaltyFlow}
+                    onChange={(e) => setLeftSlackPenaltyFlow(Number(e.target.value))}
+                    className="w-full rounded border-gray-300 focus:ring-gray-900 focus:border-gray-900 text-xs"
+                  />
+                </div>
+                <div className="col-span-2 text-[11px] text-gray-500">
+                  Higher values keep constraints tight (default 10,000). Lower values (~1,000) allow more slack.
+                </div>
+                <div className="col-span-2 grid grid-cols-1 gap-2">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">
+                      Max Angle Slack (% limit): {(leftSlackAngleFraction * 100).toFixed(3)}%
+                    </p>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.001}
+                      step={0.0001}
+                      value={leftSlackAngleFraction}
+                      onChange={(e) => setLeftSlackAngleFraction(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[11px] text-gray-500 mt-1">
+                      <span>0%</span>
+                      <span>0.05%</span>
+                      <span>0.10%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">
+                      Max Flow Slack (% limit): {(leftSlackFlowFraction * 100).toFixed(3)}%
+                    </p>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.001}
+                      step={0.0001}
+                      value={leftSlackFlowFraction}
+                      onChange={(e) => setLeftSlackFlowFraction(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[11px] text-gray-500 mt-1">
+                      <span>0%</span>
+                      <span>0.05%</span>
+                      <span>0.10%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            )}
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900"
+                checked={leftForceSecondGen}
+                onChange={(e) => setLeftForceSecondGen(e.target.checked)}
+              />
+              <span>Force 2nd-cheapest generator to max</span>
+            </label>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Switch Off Lines</p>
+              <textarea
+                rows={2}
+                value={leftDisabledLines}
+                onChange={(e) => setLeftDisabledLines(e.target.value)}
+                placeholder="e.g., 10, 58, 79"
+                className="w-full rounded border-gray-300 focus:ring-gray-900 focus:border-gray-900 text-xs"
+              />
+            </div>
+          </div>
+
           {leftOptimization.data && (
             <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs">
               <div className="grid grid-cols-3 gap-2">
@@ -977,7 +1114,7 @@ function ComparisonView() {
       {/* Right Side: Panel + Flow */}
       <div ref={rightPaneRef} className="flex-1 flex flex-col">
         {/* Right Control Panel */}
-        <div className="min-h-64 max-h-96 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
+        <div className="h-64 bg-white border-b border-gray-200 p-5 overflow-y-auto relative z-10">
           <h3 className="text-base font-semibold mb-4 text-gray-900">Line Switching Enabled</h3>
           
           {/* Line Switching Status (read-only) */}
@@ -989,6 +1126,106 @@ function ComparisonView() {
               <label className="text-gray-600">
                 Line Switching: <span className="font-medium text-gray-900">Enabled</span>
               </label>
+            </div>
+          </div>
+
+          <div className="space-y-3 text-xs text-gray-700 mb-4">
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900"
+                checked={rightUseSlack}
+                onChange={(e) => setRightUseSlack(e.target.checked)}
+              />
+              <span>Use slack variables (angle & flow)</span>
+            </label>
+            {rightUseSlack && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Angle Penalty</p>
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={rightSlackPenaltyAngle}
+                    onChange={(e) => setRightSlackPenaltyAngle(Number(e.target.value))}
+                    className="w-full rounded border-gray-300 focus:ring-gray-900 focus:border-gray-900 text-xs"
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Flow Penalty</p>
+                  <input
+                    type="number"
+                    min={100}
+                    step={100}
+                    value={rightSlackPenaltyFlow}
+                    onChange={(e) => setRightSlackPenaltyFlow(Number(e.target.value))}
+                    className="w-full rounded border-gray-300 focus:ring-gray-900 focus:border-gray-900 text-xs"
+                  />
+                </div>
+                <div className="col-span-2 text-[11px] text-gray-500">
+                  Higher values keep constraints tight (default 10,000). Lower values (~1,000) allow more slack.
+                </div>
+                <div className="col-span-2 grid grid-cols-1 gap-2">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">
+                      Max Angle Slack (% limit): {(rightSlackAngleFraction * 100).toFixed(3)}%
+                    </p>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.001}
+                      step={0.0001}
+                      value={rightSlackAngleFraction}
+                      onChange={(e) => setRightSlackAngleFraction(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[11px] text-gray-500 mt-1">
+                      <span>0%</span>
+                      <span>0.05%</span>
+                      <span>0.10%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">
+                      Max Flow Slack (% limit): {(rightSlackFlowFraction * 100).toFixed(3)}%
+                    </p>
+                    <input
+                      type="range"
+                      min={0}
+                      max={0.001}
+                      step={0.0001}
+                      value={rightSlackFlowFraction}
+                      onChange={(e) => setRightSlackFlowFraction(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[11px] text-gray-500 mt-1">
+                      <span>0%</span>
+                      <span>0.05%</span>
+                      <span>0.10%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                className="mr-2 w-4 h-4 text-gray-900 border-gray-300 rounded focus:ring-gray-900"
+                checked={rightForceSecondGen}
+                onChange={(e) => setRightForceSecondGen(e.target.checked)}
+              />
+              <span>Force 2nd-cheapest generator to max</span>
+            </label>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Switch Off Lines</p>
+              <textarea
+                rows={2}
+                value={rightDisabledLines}
+                onChange={(e) => setRightDisabledLines(e.target.value)}
+                placeholder="e.g., 11, 40, 41"
+                className="w-full rounded border-gray-300 focus:ring-gray-900 focus:border-gray-900 text-xs"
+              />
             </div>
           </div>
 
