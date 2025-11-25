@@ -16,7 +16,7 @@ from pydantic import BaseModel
 import opf_solver
 
 # Set Gurobi license
-#os.environ["GRB_LICENSE_FILE"] = ""
+os.environ["GRB_LICENSE_FILE"] = "/Users/sharafkabir/Desktop/VIP/gurobi.lic"
 
 # Initialize FastAPI
 app = FastAPI(
@@ -38,6 +38,124 @@ app.add_middleware(
 DATA_PATH = "data/pglib_opf_case57_ieee.m"
 bus_df, gen_df, branch_df, gencost_df = opf_solver.load_case_data(DATA_PATH)
 
+# Store baseline result for comparison (will be set on first run without switching)
+baseline_result = None
+
+
+def print_switching_comparison_report(baseline_result: dict, switching_result: dict, 
+                                     load_mult: float, angle_bound: float):
+    """
+    Print a comparison report of dual variables for lines that changed status
+    between baseline and switching scenarios.
+    """
+    if not baseline_result or not switching_result:
+        return
+    
+    if baseline_result.get('status') != 'optimal' or switching_result.get('status') != 'optimal':
+        return
+    
+    # Get branches data from both results
+    baseline_branches = baseline_result.get('branches', {})
+    switching_branches = switching_result.get('branches', {})
+    
+    if not baseline_branches or not switching_branches:
+        return
+    
+    # Find lines that changed status
+    switched_off_lines = []  # ON in baseline, OFF in switching
+    switched_on_lines = []   # OFF in baseline, ON in switching
+    
+    for branch_id in baseline_branches.keys():
+        baseline_status = baseline_branches[branch_id].get('status', 1)
+        switching_status = switching_branches[branch_id].get('status', 1)
+        
+        if baseline_status == 1 and switching_status == 0:
+            # Line was ON, now OFF
+            switched_off_lines.append(branch_id)
+        elif baseline_status == 0 and switching_status == 1:
+            # Line was OFF, now ON
+            switched_on_lines.append(branch_id)
+    
+    if not switched_off_lines and not switched_on_lines:
+        return
+    
+    # Print report
+    print("\n" + "=" * 120)
+    print(f"📊 LINE SWITCHING DUAL VARIABLE REPORT")
+    print(f"   Load: {load_mult:.2f}x | Angle Bound: {angle_bound:.1f}°")
+    print("=" * 120)
+    
+    # Get dual variables from baseline
+    baseline_duals = baseline_result.get('dual_variables', {})
+    all_branches_duals = baseline_duals.get('all_branches', [])
+    
+    if switched_off_lines:
+        print(f"\n🔴 LINES SWITCHED OFF ({len(switched_off_lines)} lines):")
+        print("-" * 120)
+        for branch_id in sorted(switched_off_lines):
+            branch_info = baseline_branches[branch_id]
+            
+            # Get dual info for this branch from the dict
+            # all_branches_duals is a dict with integer keys
+            dual_info = all_branches_duals.get(branch_id, None)
+            
+            fbus = branch_info.get('fbus')
+            tbus = branch_info.get('tbus')
+            flow = branch_info.get('flow', 0)
+            capacity = branch_info.get('capacity', 0)
+            util = (abs(flow) / capacity * 100) if capacity > 0 else 0
+            
+            # Get angle difference from dual_info or branch_info
+            angle_diff = dual_info.get('angle_diff_deg', 0) if dual_info else 0
+            
+            print(f"  Branch {branch_id}: ({fbus}, {tbus})")
+            print(f"    Baseline: Flow={flow:.2f} MW, Utilization={util:.2f}%, Angle Diff={angle_diff:.4f}°")
+            
+            if dual_info:
+                thermal_max = dual_info.get('thermal_limit_dual_max', 0)
+                thermal_min = dual_info.get('thermal_limit_dual_min', 0)
+                angle_max = dual_info.get('angle_limit_dual_max', 0)
+                angle_min = dual_info.get('angle_limit_dual_min', 0)
+                
+                has_dual = abs(thermal_max) > 1e-6 or abs(thermal_min) > 1e-6 or abs(angle_max) > 1e-6 or abs(angle_min) > 1e-6
+                
+                if has_dual:
+                    print(f"    ⚠️  Dual Values: thermal_max={thermal_max:.6f}, thermal_min={thermal_min:.6f}")
+                    print(f"                    angle_max={angle_max:.6f}, angle_min={angle_min:.6f}")
+                else:
+                    print(f"    ✓ Dual Values: All zero")
+            else:
+                print(f"    ⚠️  Dual information not available")
+            print()
+    
+    if switched_on_lines:
+        print(f"\n🟢 LINES SWITCHED ON ({len(switched_on_lines)} lines):")
+        print("-" * 120)
+        for branch_id in sorted(switched_on_lines):
+            branch_info = switching_branches[branch_id]
+            
+            # Get dual info from switching result to get angle diff
+            switching_duals = switching_result.get('dual_variables', {})
+            switching_all_branches = switching_duals.get('all_branches', {})
+            switching_dual_info = switching_all_branches.get(branch_id, None)
+            
+            fbus = branch_info.get('fbus')
+            tbus = branch_info.get('tbus')
+            flow = branch_info.get('flow', 0)
+            capacity = branch_info.get('capacity', 0)
+            util = (abs(flow) / capacity * 100) if capacity > 0 else 0
+            
+            # Get angle difference from switching scenario
+            angle_diff = switching_dual_info.get('angle_diff_deg', 0) if switching_dual_info else 0
+            
+            print(f"  Branch {branch_id}: ({fbus}, {tbus})")
+            print(f"    Switching: Flow={flow:.2f} MW, Utilization={util:.2f}%, Angle Diff={angle_diff:.4f}°")
+            print(f"    Note: Was OFF in baseline, no dual values available")
+            print()
+    
+    print("=" * 120)
+    print()
+
 
 # Request/Response Models
 class OptimizeRequest(BaseModel):
@@ -48,6 +166,13 @@ class OptimizeRequest(BaseModel):
     load_multiplier: Optional[float] = None  # Multiply all loads by this factor (default: 1.0)
     generator_capacity_multiplier: Optional[float] = None  # Multiply generator max capacity (default: 1.0)
     capacity_limit_multiplier: Optional[float] = None  # Multiply branch capacity limits (default: 1.0, e.g., 0.8 = 80% capacity cut)
+    use_slack: bool = False  # Enable slack variables on angle/flow constraints
+    slack_penalty_angle: Optional[float] = None
+    slack_penalty_flow: Optional[float] = None
+    force_second_cheapest: bool = False
+    switch_off_lines: Optional[List[int]] = None
+    slack_angle_fraction: Optional[float] = None  # Allow angle slack as fraction of angle limit (e.g., 0.001 = 0.1%)
+    slack_flow_fraction: Optional[float] = None  # Allow flow slack as fraction of line limit
 
 
 class OptimizeResponse(BaseModel):
@@ -61,8 +186,15 @@ class OptimizeResponse(BaseModel):
     generators: Optional[dict] = None
     branches: Optional[dict] = None
     bus_angles: Optional[dict] = None
+    bus_loads: Optional[dict] = None
+    slack_values: Optional[dict] = None
+    constraint_duals: Optional[dict] = None
+    forced_generator: Optional[int] = None
+    disabled_lines: Optional[List[int]] = None
     lines_on: Optional[int] = None
     lines_off: Optional[int] = None
+    dual_variables: Optional[dict] = None  # Contains all dual variables and non-zero duals
+    switched_off_analysis: Optional[list] = None  # Analysis of switched-off lines
     message: Optional[str] = None
 
 
@@ -151,6 +283,8 @@ async def optimize(request: OptimizeRequest):
             print(f"✅ Gen capacity adjusted: {original_capacity:.2f} MW → {new_capacity:.2f} MW (x{request.generator_capacity_multiplier})")
         
         # Run optimization
+        slack_penalty_angle = request.slack_penalty_angle if request.slack_penalty_angle is not None else 1e4
+        slack_penalty_flow = request.slack_penalty_flow if request.slack_penalty_flow is not None else 1e4
         result = opf_solver.solve_dc_opf(
             bus_df=modified_bus_df,
             gen_df=modified_gen_df,
@@ -159,7 +293,14 @@ async def optimize(request: OptimizeRequest):
             constraints=request.constraints,
             verbose=request.verbose,
             angle_bound_degrees=request.angle_bound_degrees,
-            capacity_limit_multiplier=request.capacity_limit_multiplier
+            capacity_limit_multiplier=request.capacity_limit_multiplier,
+            use_slack=request.use_slack,
+            slack_penalty_angle=slack_penalty_angle,
+            slack_penalty_flow=slack_penalty_flow,
+            force_second_cheapest=request.force_second_cheapest,
+            disabled_lines=request.switch_off_lines,
+            slack_angle_fraction=request.slack_angle_fraction,
+            slack_flow_fraction=request.slack_flow_fraction
         )
         
         # Log power balance verification
@@ -177,6 +318,27 @@ async def optimize(request: OptimizeRequest):
             else:
                 print(f"  ✅ Power balance verified (within tolerance)")
             print("=" * 70)
+
+        
+        # Store or compare results for switching analysis
+        global baseline_result
+        
+        # Determine load multiplier and angle bound for reporting
+        load_mult = request.load_multiplier if request.load_multiplier is not None else 1.0
+        angle_bound = request.angle_bound_degrees if request.angle_bound_degrees is not None else 30.0
+        
+        if 'line_switching' not in request.constraints:
+            # This is a baseline run - store it
+            baseline_result = result
+        else:
+            # This is a switching run - compare with baseline
+            if baseline_result is not None:
+                print_switching_comparison_report(
+                    baseline_result, 
+                    result, 
+                    load_mult, 
+                    angle_bound
+                )
         
         return result
     
