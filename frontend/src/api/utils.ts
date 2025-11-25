@@ -224,8 +224,20 @@ export function updateNodesWithResults(
     // Get bus load (actual load used in optimization, including multiplier)
     const load = result.bus_loads ? result.bus_loads[node.id] : undefined;
 
+    // Update style to add dotted border if no generation (only when generator data is available)
+    const updatedStyle = node.style ? { ...node.style } : {};
+    if (result.generators && node.data.busType === 'generator') {
+      // Check if bus has no generation (Pg is 0 or doesn't exist)
+      const hasGeneration = generator && generator.Pg > 0.00; 
+      if (!hasGeneration) {
+        // Use red dotted border for non-generating generators
+        updatedStyle.border = '4px dashed #dc2626'; // Red dashed border
+      }
+    }
+
     return {
       ...node,
+      style: updatedStyle,
       data: {
         ...node.data,
         generation: generator?.Pg,

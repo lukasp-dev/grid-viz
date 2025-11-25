@@ -345,8 +345,8 @@ def solve_dc_opf(
             # When z_e = 0 (line open): flow p_e^f = 0
             # When z_e = 1 (line closed): flow is bounded by thermal limits
             flow_constraints[idx] = {}
-            capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
             if rateA > 0:
+                capacity_multiplier = capacity_limit_multiplier if capacity_limit_multiplier is not None else 1.0
                 rateA_adjusted = rateA * capacity_multiplier
                 upper_constr = model.addConstr(
                     P_branch[idx] <= rateA_adjusted * z[idx] + (s_flow_pos[idx] if use_slack else 0),
@@ -482,21 +482,102 @@ def solve_dc_opf(
         for bus in buses:
             bus_angles[int(bus)] = theta[bus].X * 180 / np.pi  # Convert to degrees
         
-        # Bus loads (actual loads used in optimization, including multiplier)
-        bus_loads = {}
-        for bus in buses:
-            bus_row = bus_df[bus_df['bus_i'] == bus]
-            if not bus_row.empty:
-                bus_loads[int(bus)] = float(bus_row['Pd'].values[0])
+        # ========== Extract Dual Variables (Shadow Prices) ==========
+        # Dual variables represent the marginal cost improvement per unit increase in constraint RHS
+        # NOTE: Dual variables are only available for continuous models (not MIP). Thus cannot run for switching
         
-        # Calculate totals
-        total_gen = sum(Pg[i].X for i in generators)
-        total_load = bus_df['Pd'].sum()
-        total_shunt = bus_df['Gs'].sum()
-        total_consumption = total_load + total_shunt
+        dual_variables = {}
+        non_zero_duals = []
         
-        # Verify power balance (should be zero in DC-OPF)
-        power_balance_error = total_gen - total_consumption
+        # Check if we can get dual variables (only for LP, not MIP)
+        has_duals = not line_switching  # Duals only available without integer variables
+        
+        for idx in branches:
+            row = branch_df.loc[idx]
+            fbus = int(row['fbus'])
+            tbus = int(row['tbus'])
+            
+            # Initialize dual variables
+            thermal_dual_max = 0.0
+            thermal_dual_min = 0.0
+            angle_dual_max = 0.0
+            angle_dual_min = 0.0
+            
+            if has_duals:
+                # Get thermal limit dual variables for LP problems using .Pi
+                try:
+                    line_max_constr = model.getConstrByName(f"line_max_{idx}")
+                    line_min_constr = model.getConstrByName(f"line_min_{idx}")
+                    
+                    thermal_dual_max = line_max_constr.Pi if line_max_constr is not None else 0.0
+                    thermal_dual_min = line_min_constr.Pi if line_min_constr is not None else 0.0
+                    
+                    # Get angle limit dual variables using .Pi
+                    angle_max_constr = model.getConstrByName(f"angle_max_{idx}")
+                    angle_min_constr = model.getConstrByName(f"angle_min_{idx}")
+                    
+                    angle_dual_max = angle_max_constr.Pi if angle_max_constr is not None else 0.0
+                    angle_dual_min = angle_min_constr.Pi if angle_min_constr is not None else 0.0
+                except:
+                    pass
+            
+            
+            # Store dual variables for this branch
+            dual_info = {
+                'line': f"({fbus}, {tbus})",
+                'fbus': fbus,
+                'tbus': tbus,
+                'thermal_limit_dual_max': float(thermal_dual_max),
+                'thermal_limit_dual_min': float(thermal_dual_min),
+                'angle_limit_dual_max': float(angle_dual_max),
+                'angle_limit_dual_min': float(angle_dual_min),
+                'flow': P_branch[idx].X,
+                'capacity': row['rateA'],
+                'utilization_pct': abs(P_branch[idx].X) / row['rateA'] * 100 if row['rateA'] > 0 else 0,
+                'angle_diff_deg': (theta[row['fbus']].X - theta[row['tbus']].X) * 180 / np.pi,
+                'status': z_value
+            }
+            
+            dual_variables[int(idx)] = dual_info
+            
+            # Track non-zero duals (these are the binding constraints)
+            if abs(thermal_dual_max) > 1e-6 or abs(thermal_dual_min) > 1e-6 or \
+               abs(angle_dual_max) > 1e-6 or abs(angle_dual_min) > 1e-6:
+                non_zero_duals.append({
+                    'branch_id': int(idx),
+                    'line': f"({fbus}, {tbus})",
+                    'thermal_dual_max': float(thermal_dual_max),
+                    'thermal_dual_min': float(thermal_dual_min),
+                    'angle_dual_max': float(angle_dual_max),
+                    'angle_dual_min': float(angle_dual_min),
+                    'utilization_pct': dual_info['utilization_pct'],
+                    'status': 'on' if z_value > 0.5 else 'off'
+                })
+        
+        # ========== Analyze Switched-Off Lines ==========
+        switched_off_lines = []
+        if line_switching:
+            for idx in branches:
+                if z[idx].X < 0.5:  # Line is switched off
+                    row = branch_df.loc[idx]
+                    fbus = int(row['fbus'])
+                    tbus = int(row['tbus'])
+                    
+                    # Get the branch info from dual_variables
+                    branch_info = dual_variables[int(idx)]
+                    
+                    switched_off_lines.append({
+                        'branch_id': int(idx),
+                        'line': f"({fbus}, {tbus})",
+                        'fbus': fbus,
+                        'tbus': tbus,
+                        'utilization_pct': branch_info['utilization_pct'],
+                        'angle_diff_deg': branch_info['angle_diff_deg'],
+                        'capacity': row['rateA'],
+                        'flow': branch_info['flow'],
+                        'thermal_dual_max': branch_info['thermal_limit_dual_max'],
+                        'thermal_dual_min': branch_info['thermal_limit_dual_min']
+                    })
         
         slack_values = None
         if use_slack:
@@ -535,11 +616,8 @@ def solve_dc_opf(
         result = {
             'status': 'optimal',
             'objective': model.ObjVal,
-            'total_generation': total_gen,
-            'total_load': total_load,
-            'total_shunt': total_shunt,
-            'total_consumption': total_consumption,
-            'power_balance_error': power_balance_error,
+            'total_generation': sum(Pg[i].X for i in generators),
+            'total_load': bus_df['Pd'].sum(),
             'generators': gen_outputs,
             'branches': branch_flows,
             'bus_angles': bus_angles,
@@ -549,7 +627,15 @@ def solve_dc_opf(
             'forced_generator': forced_generator_idx,
             'disabled_lines': sorted(list(disabled_lines_set)) if disabled_lines_set else [],
             'lines_on': sum(1 for b in branch_flows.values() if b['status'] > 0.5) if line_switching else len(branch_df) - len(disabled_lines_set),
-            'lines_off': sum(1 for b in branch_flows.values() if b['status'] < 0.5) if line_switching else len(disabled_lines_set)
+            'lines_off': sum(1 for b in branch_flows.values() if b['status'] < 0.5) if line_switching else len(disabled_lines_set),
+            'dual_variables': {
+                'all_branches': dual_variables,
+                'non_zero_duals': non_zero_duals,
+                'num_binding_constraints': len(non_zero_duals),
+                'has_dual_values': has_duals,
+                'note': 'For LP problems: dual values are shadow prices ($/MW or $/rad). For MIP problems: values indicate binding constraints (1.0 = binding, 0.0 = not binding).'
+            },
+            'switched_off_analysis': switched_off_lines
         }
     else:
         result = {
