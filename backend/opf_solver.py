@@ -179,7 +179,9 @@ def solve_dc_opf(
         c2 = gencost_df.loc[idx, 'c2']
         c1 = gencost_df.loc[idx, 'c1']
         c0 = gencost_df.loc[idx, 'c0']
-        obj += c2 * Pg[idx] * Pg[idx] + c1 * Pg[idx] + c0
+        obj += c2 * Pg[idx] * Pg[idx] + c1 * Pg[idx] + c0   #Since c2 is zero, c0 is zero, so it's only just c1*pg[idx]
+        # For this dataset it simplies to: obj += c1 * Pg[idx], which alignes with DC-OPF equation model 4 from pg learn
+
     
     # Optional: small penalty for switching lines off
     if line_switching:
@@ -496,6 +498,9 @@ def solve_dc_opf(
             row = branch_df.loc[idx]
             fbus = int(row['fbus'])
             tbus = int(row['tbus'])
+            
+            # Get switching status for this branch
+            z_value = z[idx].X if line_switching else 1
             
             # Initialize dual variables
             thermal_dual_max = 0.0
